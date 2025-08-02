@@ -15,7 +15,7 @@ log = { version = "0.4.27" }
 mtf = { path = "crates/mft", version = "0.6.1", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tantivy = { version = "0.24.2", features = ["json"] }
+tantivy = { version = "0.24.2" }
 encoding = "0.2"
 byteorder = "1"
 bitflags = "2.9.1"
@@ -40,3 +40,6 @@ assert_cmd = "2.0"
 predicates = "3.1.3"
 env_logger = "0.11.8"
 tempfile = "3.2"
+
+eframe = "0.32.0"
+egui = "0.32.0"

@@ -34,9 +34,15 @@ simplelog = { workspace = true, optional = true }
 dialoguer = { workspace = true, optional = true }
 indoc = { workspace = true, optional = true }
 
+# `mft_explorer` dependencies
+eframe = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+tantivy = { workspace = true, optional = true }
+
 [features]
 default = ["mft_cmd"]
 mft_cmd = ["anyhow", "simplelog", "dialoguer", "indoc", "clap"]
+mft_explorer = ["anyhow", "clap", "egui", "eframe", "tantivy"]
 
 [dependencies.chrono]
 workspace = true
@@ -58,6 +64,10 @@ rexpect = { workspace = true }
 [[bin]]
 name = "mft_cmd"
 required-features = ["mft_cmd"]
+
+[[bin]]
+name = "mft_explorer"
+required-features = ["mft_explorer"]
 
 [[bench]]
 name = "benchmark"
