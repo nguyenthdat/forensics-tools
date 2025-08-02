@@ -1,0 +1,65 @@
+[package]
+name = "mft"
+description = "A Fast (and safe) parser for the Windows Master File Table (MFT) format"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+readme.workspace = true
+version.workspace = true
+authors = [
+    "Omer Ben-Amram <omerbenamram@gmail.com>",
+    "Dat Nguyen <dat.nguyen@bitbytelab.io>",
+]
+
+[dependencies]
+log = { workspace = true, features = ["release_max_level_debug"] }
+encoding = { workspace = true }
+byteorder = { workspace = true }
+bitflags = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+csv = { workspace = true }
+thiserror = { workspace = true }
+num-traits = { workspace = true }
+num-derive = { workspace = true }
+winstructs = { workspace = true }
+lru = { workspace = true }
+itertools = { workspace = true }
+rand = { workspace = true }
+
+# `mft_cmd` dependencies
+clap = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+simplelog = { workspace = true, optional = true }
+dialoguer = { workspace = true, optional = true }
+indoc = { workspace = true, optional = true }
+
+[features]
+default = ["mft_cmd"]
+mft_cmd = ["anyhow", "simplelog", "dialoguer", "indoc", "clap"]
+
+[dependencies.chrono]
+workspace = true
+default-features = false
+features = ["clock", "serde", "std"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+skeptic = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+env_logger = { workspace = true }
+tempfile = { workspace = true }
+
+# rexpect relies on unix process semantics, but it's only used for process interaction tests.
+[target.'cfg(not(target_os = "windows"))'.dev-dependencies]
+rexpect = { workspace = true }
+
+[[bin]]
+name = "mft_cmd"
+required-features = ["mft_cmd"]
+
+[[bench]]
+name = "benchmark"
+path = "./src/benches/benchmark.rs"
+harness = false

@@ -1,0 +1,10 @@
+[package]
+name = "timeline-explorer"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+readme.workspace = true
+version.workspace = true
+authors.workspace = true
+
+[dependencies]
