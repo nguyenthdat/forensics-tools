@@ -1,10 +1,42 @@
 [package]
 name = "timeline-explorer"
-edition.workspace = true
-homepage.workspace = true
-license.workspace = true
-readme.workspace = true
 version.workspace = true
 authors.workspace = true
+edition.workspace = true
+readme.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[features]
+default = ["gui"]
+cli = []
+gui = []
 
 [dependencies]
+anyhow = { workspace = true }
+csv = { workspace = true }
+eframe = { workspace = true }
+egui = { workspace = true }
+itertools = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tantivy = { workspace = true }
+clap = { workspace = true, features = ["derive"] }
+dirs = { workspace = true }
+polars = { workspace = true, features = ["full"] }
+rayon = { workspace = true }
+
+[dependencies.chrono]
+workspace = true
+default-features = false
+features = ["clock", "serde", "std"]
+
+[[bin]]
+name = "timeline-explorer-cli"
+path = "src/bin/cli.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "timeline-explorer-gui"
+path = "src/bin/gui.rs"
+required-features = ["gui"]

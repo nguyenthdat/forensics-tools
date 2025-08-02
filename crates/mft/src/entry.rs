@@ -87,7 +87,7 @@ bitflags! {
     pub struct EntryFlags: u16 {
         const ALLOCATED             = 0x01;
         const INDEX_PRESENT         = 0x02;
-        const IS_EXTENSION          = 0x04; //Record is an exension (Set for records in the $Extend directory)
+        const IS_EXTENSION          = 0x04; //Record is an extension (Set for records in the $Extend directory)
         const SPECIAL_INDEX_PRESENT = 0x08; //Special index present (Set for non-directory records containing an index: $Secure, $ObjID, $Quota, $Reparse)
     }
 }
