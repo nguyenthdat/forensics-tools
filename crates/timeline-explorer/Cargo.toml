@@ -25,6 +25,18 @@ clap = { workspace = true, features = ["derive"] }
 dirs = { workspace = true }
 polars = { workspace = true, features = ["full"] }
 rayon = { workspace = true }
+time = { version = "0.3.41", features = [
+    "serde",
+    "parsing",
+    "macros",
+    "large-dates",
+    "local-offset",
+    "serde-human-readable",
+    "serde-well-known",
+    "quickcheck",
+    "formatting",
+] }
+log.workspace = true
 
 [dependencies.chrono]
 workspace = true
