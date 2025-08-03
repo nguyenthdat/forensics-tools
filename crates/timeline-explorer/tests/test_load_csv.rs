@@ -2,7 +2,7 @@ use timeline_explorer::{
     core::csv_loader::load_csv,
     index::{
         search::{fetch_hits_df, search_ids},
-        writer::index_csv,
+        writer::{index_csv, index_csv_streaming},
     },
 };
 

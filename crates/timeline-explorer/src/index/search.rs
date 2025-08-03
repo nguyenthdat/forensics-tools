@@ -60,6 +60,7 @@ pub fn fetch_hits_df<P: AsRef<Path>>(
     // ── 2. lazy scan and filter CSV ────────────────────────────────────
     let df = load_csv(csv_path)?
         .lazy()
+        .with_column(col("idx").cast(DataType::UInt64))
         .filter(col("idx").is_in(lit(Series::new("filter_ids".into(), &ids)), false))
         .with_column(
             col("idx")
@@ -77,6 +78,7 @@ pub fn fetch_hits_df<P: AsRef<Path>>(
                 .alias("__search_rank"),
         )
         .sort_by_exprs([col("__search_rank")], SortMultipleOptions::default())
+        .drop(Selector::Matches("__search_rank".into()))
         .collect()?;
 
     Ok(df)
@@ -135,6 +137,7 @@ pub fn fetch_hits_with_scores_df<P: AsRef<Path>>(
                 .alias("__search_rank"),
         ])
         .sort_by_exprs([col("__search_rank")], SortMultipleOptions::default())
+        .drop(Selector::Matches("__search_rank".into()))
         .collect()?;
 
     Ok(df)

@@ -39,6 +39,9 @@ time = { version = "0.3.41", features = [
 log.workspace = true
 tracing-subscriber = "0.3.19"
 tempfile.workspace = true
+num_cpus = "1.17.0"
+speedate = "0.16.0"
+lexical-core = "1.0.5"
 
 [dependencies.chrono]
 workspace = true
