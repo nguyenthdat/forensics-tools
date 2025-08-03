@@ -1,6 +1,9 @@
 use timeline_explorer::{
     core::csv_loader::load_csv,
-    index::{search::search_ids, writer::index_csv},
+    index::{
+        search::{fetch_hits_df, search_ids},
+        writer::index_csv,
+    },
 };
 
 #[test]
@@ -59,6 +62,10 @@ fn test_index_search() -> anyhow::Result<()> {
 
     assert!(!results.is_empty());
     println!("Search results: {:?}", results);
+
+    let df = fetch_hits_df(&path, &results).expect("Failed to fetch hits DataFrame");
+    assert!(!df.is_empty());
+    println!("Fetched hits DataFrame with {} rows", df);
 
     Ok(())
 }

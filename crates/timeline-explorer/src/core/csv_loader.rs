@@ -8,7 +8,7 @@ pub fn load_csv<P: AsRef<Path>>(path: P) -> anyhow::Result<DataFrame> {
         .try_into_reader_with_file_path(Some(path.as_ref().to_path_buf()))?
         .finish()?;
 
-    let df_with_id = df.lazy().with_row_index("id", Some(1)).collect()?;
+    let df_with_id = df.lazy().with_row_index("idx", Some(1)).collect()?;
 
     Ok(df_with_id)
 }
