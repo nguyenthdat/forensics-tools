@@ -37,6 +37,8 @@ time = { version = "0.3.41", features = [
     "formatting",
 ] }
 log.workspace = true
+tracing-subscriber = "0.3.19"
+tempfile.workspace = true
 
 [dependencies.chrono]
 workspace = true

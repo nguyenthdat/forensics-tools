@@ -1,12 +1,15 @@
-use timeline_explorer::core::csv_loader::load_csv;
+use timeline_explorer::{core::csv_loader::load_csv, index::writer::index_csv};
 
 #[test]
 fn test_load_csv_data_and_build_index() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().init();
+
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let path = format!("{}/tests/data/mft.csv", manifest_dir);
+    let temp_dir = tempfile::tempdir()?;
 
     // Load the CSV file
-    let df = load_csv(path).expect("Failed to load CSV file");
+    let df = load_csv(&path).expect("Failed to load CSV file");
     assert!(!df.is_empty());
     println!("DataFrame loaded successfully with {} rows", df.height());
 
@@ -16,7 +19,12 @@ fn test_load_csv_data_and_build_index() -> anyhow::Result<()> {
     println!("Column names: {:?}", column_names);
 
     // build the index
-    let index = timeline_explorer::index::writer::create_index_from_df(&df)?;
+    let index = index_csv(
+        &path,
+        &temp_dir.path().to_string_lossy().to_string(),
+        10,
+        512,
+    )?;
     println!(
         "Index created successfully with {:?} fields",
         index.fields_metadata()?

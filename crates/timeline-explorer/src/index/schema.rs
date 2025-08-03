@@ -1,52 +1,66 @@
-use polars::frame::DataFrame;
-use polars::prelude::*;
-use std::collections::HashMap;
-use tantivy::schema::{
-    FAST, INDEXED, JsonObjectOptions, STORED, SchemaBuilder, TEXT, TextFieldIndexing,
-};
+use csv::ReaderBuilder;
+use std::path::Path;
+use tantivy::schema::*;
 
-/// Build a Tantivy schema from a Polars DataFrame and
-/// return the schema plus a map <column-name → Field>
-/// so writer code can add documents quickly.
-pub fn build_schema_from_df(
-    df: &DataFrame,
-) -> (
-    tantivy::schema::Schema,
-    HashMap<String, tantivy::schema::Field>,
-) {
-    let mut builder = SchemaBuilder::default();
+/// Inspect the first `sample_rows` records to guess each column’s type.
+/// Falls back to TEXT for mixed/unrecognised data.
+pub fn infer_schema<P: AsRef<Path>>(
+    csv_path: P,
+    sample_rows: usize,
+) -> anyhow::Result<(Schema, Vec<Field>)> {
+    let mut rdr = ReaderBuilder::new()
+        .has_headers(true)
+        .from_path(&csv_path)?;
+    let headers = rdr.headers()?.clone();
 
-    // Primary key that links Tantivy hits ↔ Polars rows
-    let row_id = builder.add_u64_field("row_id", FAST | STORED | INDEXED);
+    #[derive(Clone)]
+    enum Guess {
+        I64,
+        F64,
+        Bool,
+        Date,
+        Text,
+    }
+    let mut guesses = vec![Guess::I64; headers.len()];
 
-    // For every Polars column add the closest Tantivy field type
-    let mut field_map = HashMap::new();
-    for field in df.schema().iter_fields() {
-        let col_name = field.name().to_string();
-        let dtype = field.dtype();
-
-        let field = match dtype {
-            DataType::String => builder.add_text_field(&col_name, TEXT | STORED),
-            DataType::Int64 | DataType::Int32 => builder.add_i64_field(&col_name, FAST | STORED),
-            DataType::UInt64 | DataType::UInt32 => builder.add_u64_field(&col_name, FAST | STORED),
-            DataType::Float64 | DataType::Float32 => {
-                builder.add_f64_field(&col_name, FAST | STORED)
-            }
-            DataType::Boolean => builder.add_bool_field(&col_name, STORED),
-            DataType::Date | DataType::Datetime(_, _) => {
-                builder.add_date_field(&col_name, FAST | STORED)
-            }
-            // Anything exotic goes into a big JSON field so it’s at least searchable.
-            _ => builder.add_json_field(
-                &col_name,
-                JsonObjectOptions::default()
-                    .set_stored()
-                    .set_indexing_options(TextFieldIndexing::default()),
-            ),
-        };
-        field_map.insert(col_name.clone(), field);
+    for result in rdr.records().take(sample_rows) {
+        let rec = result?;
+        for (idx, value) in rec.iter().enumerate() {
+            guesses[idx] = match (&guesses[idx], value) {
+                (_, "") => Guess::Text, // empty → treat as text so it’s stored
+                (Guess::I64, v) if v.parse::<i64>().is_ok() => Guess::I64,
+                (Guess::I64, v) | (Guess::F64, v) if v.parse::<f64>().is_ok() => Guess::F64,
+                (Guess::I64 | Guess::F64 | Guess::Bool, v)
+                    if matches!(v.to_ascii_lowercase().as_str(), "true" | "false") =>
+                {
+                    Guess::Bool
+                }
+                // crude ISO-8601 check (needs chrono if you want more)
+                (Guess::I64 | Guess::F64 | Guess::Bool | Guess::Date, v)
+                    if chrono::DateTime::parse_from_rfc3339(v).is_ok() =>
+                {
+                    Guess::Date
+                }
+                _ => Guess::Text,
+            };
+        }
     }
 
-    field_map.insert("row_id".into(), row_id);
-    (builder.build(), field_map)
+    // Build Tantivy schema from guesses
+    let mut builder = Schema::builder();
+    builder.add_u64_field("idx", INDEXED | STORED | FAST);
+    let mut fields = Vec::with_capacity(headers.len());
+
+    for (name, guess) in headers.iter().zip(&guesses) {
+        let kind = match guess {
+            Guess::I64 => builder.add_i64_field(name, INDEXED | STORED | FAST),
+            Guess::F64 => builder.add_f64_field(name, INDEXED | STORED | FAST),
+            Guess::Bool => builder.add_bool_field(name, INDEXED | STORED | FAST),
+            Guess::Date => builder.add_date_field(name, INDEXED | STORED | FAST),
+            Guess::Text => builder.add_text_field(name, TEXT | STORED),
+        };
+        fields.push(kind);
+    }
+
+    Ok((builder.build(), fields))
 }
