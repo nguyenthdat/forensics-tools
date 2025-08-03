@@ -14,8 +14,6 @@ pub fn create_index_from_df(df: &DataFrame) -> anyhow::Result<Index> {
     let (schema, field_map) = build_schema_from_df(df);
 
     // 2) Create / open index on disk (use the provided directory)
-    // Use an in‑memory directory during tests to skip slow disk I/O.
-
     let dir = MmapDirectory::create_from_tempdir()?;
     let index = Index::open_or_create(dir, schema.clone())?;
 

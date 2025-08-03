@@ -17,8 +17,6 @@ pub fn load_csv<P: AsRef<Path>>(path: P) -> anyhow::Result<DataFrame> {
 mod tests {
     use super::*;
 
-    // First filename: ["Signature", "EntryId", "Sequence", "BaseEntryId", "BaseEntrySequence", "HardLinkCount", "Flags", "UsedEntrySize", "TotalEntrySize", "FileSize", "IsADirectory", "IsDeleted", "HasAlternateDataStreams", "StandardInfoFlags", "StandardInfoLastModified", "StandardInfoLastAccess", "StandardInfoCreated", "FileNameFlags", "FileNameLastModified", "FileNameLastAccess", "FileNameCreated", "FullPath"]
-
     #[test]
     fn test_load_csv() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
