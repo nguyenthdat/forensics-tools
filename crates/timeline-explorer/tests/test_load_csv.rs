@@ -1,4 +1,7 @@
-use timeline_explorer::{core::csv_loader::load_csv, index::writer::index_csv};
+use timeline_explorer::{
+    core::csv_loader::load_csv,
+    index::{search::search_ids, writer::index_csv},
+};
 
 #[test]
 fn test_load_csv_data_and_build_index() -> anyhow::Result<()> {
@@ -32,5 +35,30 @@ fn test_load_csv_data_and_build_index() -> anyhow::Result<()> {
 
     // Verify the index creation
     // search for a specific field in the index
+    Ok(())
+}
+
+#[test]
+fn test_index_search() -> anyhow::Result<()> {
+    tracing_subscriber::fmt().init();
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let path = format!("{}/tests/data/mft.csv", manifest_dir);
+    let temp_dir = tempfile::tempdir()?;
+
+    // Load the CSV file and build the index
+    index_csv(
+        &path,
+        &temp_dir.path().to_string_lossy().to_string(),
+        10,
+        512,
+    )?;
+
+    // Perform a search on the indexed data
+    let results = search_ids(&temp_dir.path(), "volume", 10_000)?;
+
+    assert!(!results.is_empty());
+    println!("Search results: {:?}", results);
+
     Ok(())
 }
