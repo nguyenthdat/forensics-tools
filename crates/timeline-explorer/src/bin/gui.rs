@@ -3,6 +3,7 @@ use eframe::{App, NativeOptions, egui};
 use egui::Context;
 use egui_extras::{Column, TableBuilder};
 use polars::prelude::*;
+use polars_sql::SQLContext;
 use rfd::FileDialog;
 use std::{
     env,
@@ -30,6 +31,10 @@ struct TimelineExplorerApp {
     cols: Vec<String>,
     /// Text filter
     filter: String,
+    /// SQL query text
+    sql_query: String,
+    /// Whether we're in SQL mode
+    sql_mode: bool,
     /// How many rows have we collected so far (for pagination / virtual scroll)?
     offset: usize,
     /// Page size
@@ -47,6 +52,8 @@ impl TimelineExplorerApp {
             batch: None,
             cols: Vec::new(),
             filter: String::new(),
+            sql_query: "SELECT * FROM data LIMIT 1000".to_string(),
+            sql_mode: false,
             offset: 0,
             page: 1_000,
             path: None,
@@ -89,6 +96,7 @@ impl TimelineExplorerApp {
         self.lf = Some(lf);
         self.path = Some(path_buf);
         self.offset = 0;
+        self.sql_mode = false; // Reset to filter mode when opening new file
         self.error = None; // Clear any previous errors
 
         self.try_collect_batch()
@@ -105,8 +113,19 @@ impl TimelineExplorerApp {
     }
 
     fn try_collect_batch(&mut self) -> Result<()> {
-        let lf = self.lf.as_ref().with_context(|| "No CSV file loaded")?;
+        if self.lf.is_none() {
+            return Err(anyhow::anyhow!("No CSV file loaded"));
+        }
 
+        if self.sql_mode {
+            self.try_execute_sql()
+        } else {
+            let lf = self.lf.as_ref().unwrap().clone();
+            self.try_collect_filtered_batch(&lf)
+        }
+    }
+
+    fn try_collect_filtered_batch(&mut self, lf: &LazyFrame) -> Result<()> {
         let mut q = lf.clone();
 
         if !self.filter.is_empty() {
@@ -139,6 +158,32 @@ impl TimelineExplorerApp {
         Ok(())
     }
 
+    fn try_execute_sql(&mut self) -> Result<()> {
+        let lf = self.lf.as_ref().with_context(|| "No CSV file loaded")?;
+
+        // Create SQL context and register the dataframe as "data"
+        let mut ctx = SQLContext::new();
+        ctx.register("data", lf.clone());
+
+        // Execute the SQL query
+        let result_lf = ctx
+            .execute(&self.sql_query)
+            .with_context(|| "Failed to execute SQL query")?;
+
+        let df = result_lf
+            .collect()
+            .with_context(|| "Failed to collect SQL query results")?;
+
+        self.batch = Some(df);
+        Ok(())
+    }
+
+    fn execute_sql(&mut self) {
+        if let Err(e) = self.try_execute_sql() {
+            self.error = Some(e.to_string());
+        }
+    }
+
     fn try_get_cell_value(&self, df: &DataFrame, col: &str, idx: usize) -> Result<String> {
         let column = df
             .column(col)
@@ -164,15 +209,48 @@ impl App for TimelineExplorerApp {
                 if let Some(p) = &self.path {
                     ui.label(p.display().to_string());
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.text_edit_singleline(&mut self.filter).lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
+
+                ui.separator();
+
+                // Mode selection
+                ui.label("Mode:");
+                if ui.selectable_label(!self.sql_mode, "Filter").clicked() {
+                    self.sql_mode = false;
+                    self.offset = 0;
+                    self.collect_batch();
+                }
+                if ui.selectable_label(self.sql_mode, "SQL").clicked() {
+                    self.sql_mode = true;
+                    self.offset = 0;
+                }
+            });
+        });
+
+        // Query panel
+        egui::TopBottomPanel::top("query").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if self.sql_mode {
+                    ui.label("SQL Query:");
+                    let response = ui.text_edit_singleline(&mut self.sql_query);
+                    if (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                        || ui.button("Execute").clicked()
                     {
-                        self.offset = 0;
-                        self.collect_batch();
+                        self.execute_sql();
                     }
-                    ui.label("Filter:");
-                });
+                    if ui.button("Clear").clicked() {
+                        self.sql_query.clear();
+                    }
+                } else {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.text_edit_singleline(&mut self.filter).lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            self.offset = 0;
+                            self.collect_batch();
+                        }
+                        ui.label("Filter:");
+                    });
+                }
             });
         });
 
@@ -184,19 +262,26 @@ impl App for TimelineExplorerApp {
 
             if let Some(df) = &self.batch {
                 let n_rows = df.height();
+
+                // Update columns for the current dataframe (important for SQL results)
+                let current_cols: Vec<String> = df
+                    .get_column_names()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+
                 let table = TableBuilder::new(ui)
                     .striped(true)
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
 
-                let table_with_columns = self
-                    .cols
+                let table_with_columns = current_cols
                     .iter()
                     .fold(table, |acc, _| acc.column(Column::auto()));
 
                 table_with_columns
                     .header(20.0, |mut header| {
-                        for col in &self.cols {
+                        for col in &current_cols {
                             header.col(|ui| {
                                 ui.strong(col);
                             });
@@ -205,7 +290,7 @@ impl App for TimelineExplorerApp {
                     .body(|body| {
                         body.rows(18.0, n_rows, |mut row| {
                             let idx = row.index();
-                            for col in &self.cols {
+                            for col in &current_cols {
                                 let value = self
                                     .try_get_cell_value(df, col, idx)
                                     .unwrap_or_else(|e| format!("Error: {}", e));
@@ -218,19 +303,24 @@ impl App for TimelineExplorerApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Prev").clicked() && self.offset >= self.page {
-                        self.offset -= self.page;
-                        self.collect_batch();
+                    // Only show pagination for filter mode
+                    if !self.sql_mode {
+                        if ui.button("Prev").clicked() && self.offset >= self.page {
+                            self.offset -= self.page;
+                            self.collect_batch();
+                        }
+                        if ui.button("Next").clicked() {
+                            self.offset += self.page;
+                            self.collect_batch();
+                        }
+                        ui.label(format!(
+                            "Showing rows {}..{}",
+                            self.offset + 1,
+                            self.offset + n_rows
+                        ));
+                    } else {
+                        ui.label(format!("Query returned {} rows", n_rows));
                     }
-                    if ui.button("Next").clicked() {
-                        self.offset += self.page;
-                        self.collect_batch();
-                    }
-                    ui.label(format!(
-                        "Showing rows {}..{}",
-                        self.offset + 1,
-                        self.offset + n_rows
-                    ));
                 });
             } else {
                 ui.centered_and_justified(|ui| {
