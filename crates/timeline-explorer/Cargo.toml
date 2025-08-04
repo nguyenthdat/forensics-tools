@@ -46,6 +46,17 @@ rustyline = { workspace = true }
 rusqlite = { workspace = true }
 bon = { workspace = true }
 tantivy-query-grammar = { workspace = true }
+egui_extras = { version = "0.32.0", features = [
+    "all_loaders",
+    "chrono",
+    "datepicker",
+    "document-features",
+    "serde",
+    "svg_text",
+    "syntect",
+] }
+rfd = { version = "0.15.4", features = ["tokio", "common-controls-v6", "file-handle-inner"] }
+encoding_rs = "0.8.35"
 
 [dependencies.chrono]
 workspace = true
