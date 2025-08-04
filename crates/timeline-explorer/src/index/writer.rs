@@ -5,7 +5,7 @@ use csv::ReaderBuilder;
 use rayon::prelude::*;
 use tantivy::{DateTime as TantivyDateTime, Index, TantivyDocument, schema::FieldType};
 
-use crate::index::schema::infer_schema;
+use crate::index::schema::infer_schema_from_csv;
 
 pub fn index_csv<P: AsRef<Path>>(
     csv_path: P,
@@ -14,7 +14,7 @@ pub fn index_csv<P: AsRef<Path>>(
     writer_mem_mb: usize,
 ) -> anyhow::Result<Index> {
     // 1. determine schema from sample
-    let (schema, fields) = infer_schema(&csv_path, sample_rows)?;
+    let (schema, fields) = infer_schema_from_csv(&csv_path, sample_rows)?;
 
     // Get the idx field from the schema
     let idx_field = schema.get_field("idx")?;
@@ -114,7 +114,7 @@ pub fn index_csv_streaming<P: AsRef<Path>>(
     use speedate::DateTime as FastDate;
 
     // --- 1. schema -----------------------------------------------------------
-    let (schema, fields) = infer_schema(&csv_path, sample_rows)?;
+    let (schema, fields) = infer_schema_from_csv(&csv_path, sample_rows)?;
     let idx_field = schema.get_field("idx")?;
 
     // --- 2. writer -----------------------------------------------------------

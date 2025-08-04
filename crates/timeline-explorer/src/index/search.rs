@@ -28,13 +28,13 @@ pub fn search_ids(
     // ── run search, collect (score, DocAddress) ──────────────
     let hits = searcher.search(&query, &TopDocs::with_limit(limit))?;
 
-    // ── map hits to (score, idx) using the fast-field ────────
+    // ── map hits to (score, row_id) using the fast-field ────────
     let mut out = Vec::with_capacity(hits.len());
     for (score, addr) in hits {
         let seg_reader = searcher.segment_reader(addr.segment_ord);
-        let reader = seg_reader.fast_fields().u64("idx")?;
-        let idx_val = reader.values.get_val(addr.doc_id);
-        out.push((score, idx_val));
+        let reader = seg_reader.fast_fields().u64("row_id")?;
+        let row_id_val = reader.values.get_val(addr.doc_id);
+        out.push((score, row_id_val));
     }
     Ok(out)
 }
@@ -47,8 +47,8 @@ pub fn fetch_hits_df<P: AsRef<Path>>(
         return Ok(DataFrame::empty());
     }
 
-    // ── 1. extract idx values and create rank mapping ─────────────────
-    let ids: Vec<u64> = hits.iter().map(|&(_, idx)| idx).collect();
+    // ── 1. extract row_id values and create rank mapping ─────────────────
+    let ids: Vec<u64> = hits.iter().map(|&(_, row_id)| row_id).collect();
 
     // Create rank mapping for preserving search order
     let id_to_rank: std::collections::HashMap<u64, u32> = ids
@@ -60,10 +60,10 @@ pub fn fetch_hits_df<P: AsRef<Path>>(
     // ── 2. lazy scan and filter CSV ────────────────────────────────────
     let df = load_csv(csv_path)?
         .lazy()
-        .with_column(col("idx").cast(DataType::UInt64))
-        .filter(col("idx").is_in(lit(Series::new("filter_ids".into(), &ids)), false))
+        .with_column(col("row_id").cast(DataType::UInt64))
+        .filter(col("row_id").is_in(lit(Series::new("filter_ids".into(), &ids)), false))
         .with_column(
-            col("idx")
+            col("row_id")
                 .map(
                     move |s| {
                         let ranks: UInt32Chunked = s
@@ -93,9 +93,11 @@ pub fn fetch_hits_with_scores_df<P: AsRef<Path>>(
     }
 
     // ── 1. create lookup maps ─────────────────────────────────────────
-    let ids: Vec<u64> = hits.iter().map(|&(_, idx)| idx).collect();
-    let id_to_score: std::collections::HashMap<u64, f32> =
-        hits.iter().map(|&(score, idx)| (idx, score)).collect();
+    let ids: Vec<u64> = hits.iter().map(|&(_, row_id)| row_id).collect();
+    let id_to_score: std::collections::HashMap<u64, f32> = hits
+        .iter()
+        .map(|&(score, row_id)| (row_id, score))
+        .collect();
     let id_to_rank: std::collections::HashMap<u64, u32> = ids
         .iter()
         .enumerate()
@@ -105,10 +107,10 @@ pub fn fetch_hits_with_scores_df<P: AsRef<Path>>(
     // ── 2. lazy scan, filter, and enrich with search metadata ──────────
     let df = load_csv(csv_path)?
         .lazy()
-        .filter(col("idx").is_in(lit(Series::new("filter_ids".into(), &ids)), false))
+        .filter(col("row_id").is_in(lit(Series::new("filter_ids".into(), &ids)), false))
         .with_columns([
             // Add search score
-            col("idx")
+            col("row_id")
                 .map(
                     move |s| {
                         let scores: Float32Chunked = s
@@ -122,7 +124,7 @@ pub fn fetch_hits_with_scores_df<P: AsRef<Path>>(
                 )
                 .alias("search_score"),
             // Add search rank for sorting
-            col("idx")
+            col("row_id")
                 .map(
                     move |s| {
                         let ranks: UInt32Chunked = s
