@@ -25,3 +25,5 @@ Cargo.lock
 
 # Ignore all test data files
 # **/tests/data/*.csv
+
+.DS_Store

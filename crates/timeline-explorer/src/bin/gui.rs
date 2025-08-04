@@ -1,12 +1,3 @@
-//! Minimal CSV Timeline-Explorer-style viewer
-//! ------------------------------------------------
-//! - Built with `eframe`/`egui`
-//! - Reads CSVs lazily with `polars`
-//! - Renders a scroll-and-sortable table (via `egui_extras::TableBuilder`)
-//! - Simple text filter across all columns
-//!
-//! You can run it with `cargo run --release -- <path/to/file.csv>` or load a file at runtime
-
 use eframe::{App, NativeOptions, egui};
 use egui::Context;
 use egui_extras::{Column, TableBuilder};
@@ -23,16 +14,16 @@ fn main() -> eframe::Result<()> {
 
     let native_options = NativeOptions::default();
     eframe::run_native(
-        "CSV Dashboard",
+        "Timeline Explorer CSV Viewer",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(CsvApp::new(file)))),
+        Box::new(move |_cc| Ok(Box::new(TimelineExplorerApp::new(file)))),
     )
 }
 
-struct CsvApp {
+struct TimelineExplorerApp {
     /// Lazily-scanned CSV. We keep it around so we can re-collect with filters.
     lf: Option<LazyFrame>,
-    /// Materialised batch that's currently displayed (e.g. 1k rows).
+    /// Materialised batch that's currentlys displayed (e.g. 1k rows).
     batch: Option<DataFrame>,
     /// Column names cache
     cols: Vec<String>,
@@ -48,7 +39,7 @@ struct CsvApp {
     error: Option<String>,
 }
 
-impl CsvApp {
+impl TimelineExplorerApp {
     pub fn new(file: Option<PathBuf>) -> Self {
         let mut app = Self {
             lf: None,
@@ -80,7 +71,7 @@ impl CsvApp {
                     .unwrap()
                     .iter_names()
                     .map(|s| s.to_string())
-                    .collect(); // Fixed: convert to String
+                    .collect();
                 self.lf = Some(lf);
                 self.path = Some(path.as_ref().to_path_buf());
                 self.offset = 0;
@@ -122,7 +113,7 @@ impl CsvApp {
     }
 }
 
-impl App for CsvApp {
+impl App for TimelineExplorerApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             ui.horizontal(|ui| {
