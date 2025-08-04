@@ -28,10 +28,10 @@ impl BenchmarkData {
 fn bench_csv_loading(c: &mut Criterion) {
     let data = BenchmarkData::new().expect("Failed to setup benchmark data");
 
-    // Configure for faster benchmarks
+    // Configure for faster benchmarks - minimum 10 samples
     let mut group = c.benchmark_group("csv_loading");
     group.sample_size(10);
-    group.measurement_time(Duration::from_secs(120));
+    group.measurement_time(Duration::from_secs(30));
 
     group.bench_function("load_csv", |b| {
         b.iter(|| {
@@ -46,9 +46,9 @@ fn bench_csv_loading(c: &mut Criterion) {
 fn bench_index_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("index_creation");
 
-    // Reduce sample size and increase measurement time for slow operations
-    group.sample_size(5);
-    group.measurement_time(Duration::from_secs(120));
+    // Minimum 10 samples required by criterion
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(60));
     group.sampling_mode(SamplingMode::Flat);
 
     // Reduce sample sizes for faster testing
@@ -163,9 +163,9 @@ fn bench_search_operations(c: &mut Criterion) {
 fn bench_end_to_end_workflow(c: &mut Criterion) {
     let mut group = c.benchmark_group("end_to_end");
 
-    // Very slow operation - minimal samples
-    group.sample_size(3);
-    group.measurement_time(Duration::from_secs(360));
+    // Minimum 10 samples, but reduce measurement time
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(120));
     group.sampling_mode(SamplingMode::Flat);
 
     group.bench_function("index_and_search", |b| {
@@ -205,8 +205,8 @@ fn bench_end_to_end_workflow(c: &mut Criterion) {
 fn bench_memory_usage(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_efficiency");
 
-    group.sample_size(5);
-    group.measurement_time(Duration::from_secs(20));
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(40));
 
     // Test fewer buffer sizes
     let buffer_sizes = [512, 1024];

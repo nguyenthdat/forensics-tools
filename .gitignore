@@ -22,5 +22,6 @@ target
 .idea
 Cargo.lock
 *.rmeta
+
 # Ignore all test data files
-**/tests/data/*.csv
+# **/tests/data/*.csv
