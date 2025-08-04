@@ -1,11 +1,12 @@
 use anyhow::{Context as AnyhowContext, Result};
 use eframe::{App, NativeOptions, egui};
-use egui::Context;
+use egui::{Color32, Context, RichText};
 use egui_extras::{Column, TableBuilder};
 use polars::prelude::*;
 use polars_sql::SQLContext;
 use rfd::FileDialog;
 use std::{
+    collections::HashMap,
     env,
     path::{Path, PathBuf},
 };
@@ -22,14 +23,127 @@ fn main() -> eframe::Result<()> {
     )
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum FilterType {
+    Contains,
+    Exact,
+    StartsWith,
+    EndsWith,
+    NotContains,
+    NotEqual,
+    GreaterThan,
+    LessThan,
+    GreaterEqual,
+    LessEqual,
+    DateRange,
+    IsEmpty,
+    IsNotEmpty,
+}
+
+impl FilterType {
+    fn display_name(&self) -> &'static str {
+        match self {
+            FilterType::Contains => "Contains",
+            FilterType::Exact => "Exact match",
+            FilterType::StartsWith => "Starts with",
+            FilterType::EndsWith => "Ends with",
+            FilterType::NotContains => "Does not contain",
+            FilterType::NotEqual => "Not equal",
+            FilterType::GreaterThan => "Greater than",
+            FilterType::LessThan => "Less than",
+            FilterType::GreaterEqual => "Greater or equal",
+            FilterType::LessEqual => "Less or equal",
+            FilterType::DateRange => "Date range",
+            FilterType::IsEmpty => "Is empty",
+            FilterType::IsNotEmpty => "Is not empty",
+        }
+    }
+
+    fn all() -> Vec<FilterType> {
+        vec![
+            FilterType::Contains,
+            FilterType::Exact,
+            FilterType::StartsWith,
+            FilterType::EndsWith,
+            FilterType::NotContains,
+            FilterType::NotEqual,
+            FilterType::GreaterThan,
+            FilterType::LessThan,
+            FilterType::GreaterEqual,
+            FilterType::LessEqual,
+            FilterType::DateRange,
+            FilterType::IsEmpty,
+            FilterType::IsNotEmpty,
+        ]
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ColumnFilter {
+    pub enabled: bool,
+    pub filter_type: FilterType,
+    pub value: String,
+    pub date_from: String,
+    pub date_to: String,
+    pub case_sensitive: bool,
+    pub unique_values: Vec<String>,
+    pub selected_values: HashMap<String, bool>,
+    pub show_dropdown: bool,
+    pub show_advanced: bool,
+}
+
+impl Default for ColumnFilter {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            filter_type: FilterType::Contains,
+            value: String::new(),
+            date_from: String::new(),
+            date_to: String::new(),
+            case_sensitive: false,
+            unique_values: Vec::new(),
+            selected_values: HashMap::new(),
+            show_dropdown: false,
+            show_advanced: false,
+        }
+    }
+}
+
+impl ColumnFilter {
+    fn has_active_filters(&self) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        match self.filter_type {
+            FilterType::IsEmpty | FilterType::IsNotEmpty => true,
+            FilterType::DateRange => !self.date_from.is_empty() || !self.date_to.is_empty(),
+            _ => !self.value.is_empty() || self.selected_values.values().any(|&selected| !selected),
+        }
+    }
+
+    fn update_unique_values(&mut self, values: Vec<String>) {
+        // Only update if values have changed to preserve selections
+        if self.unique_values != values {
+            self.unique_values = values;
+            // Initialize all values as selected by default
+            for value in &self.unique_values {
+                self.selected_values.entry(value.clone()).or_insert(true);
+            }
+        }
+    }
+}
+
 struct TimelineExplorerApp {
     /// Lazily-scanned CSV. We keep it around so we can re-collect with filters.
     lf: Option<LazyFrame>,
-    /// Materialised batch that's currentlys displayed (e.g. 1k rows).
+    /// Materialised batch that's currently displayed (e.g. 1k rows).
     batch: Option<DataFrame>,
     /// Column names cache
     cols: Vec<String>,
-    /// Text filter
+    /// Column filters
+    column_filters: HashMap<String, ColumnFilter>,
+    /// Text filter (global search)
     filter: String,
     /// SQL query text
     sql_query: String,
@@ -43,6 +157,10 @@ struct TimelineExplorerApp {
     path: Option<PathBuf>,
     /// Possible error message
     error: Option<String>,
+    /// Show filter panel
+    show_filters: bool,
+    /// Column data types for better filtering
+    column_types: HashMap<String, DataType>,
 }
 
 impl TimelineExplorerApp {
@@ -51,6 +169,7 @@ impl TimelineExplorerApp {
             lf: None,
             batch: None,
             cols: Vec::new(),
+            column_filters: HashMap::new(),
             filter: String::new(),
             sql_query: "SELECT * FROM data LIMIT 1000".to_string(),
             sql_mode: false,
@@ -58,6 +177,8 @@ impl TimelineExplorerApp {
             page: 1_000,
             path: None,
             error: None,
+            show_filters: true,
+            column_types: HashMap::new(),
         };
         if let Some(p) = file {
             if let Err(e) = app.try_open_file(&p) {
@@ -86,22 +207,61 @@ impl TimelineExplorerApp {
             .finish()
             .with_context(|| format!("Failed to read CSV file: {}", path_buf.display()))?;
 
-        self.cols = lf
+        let schema = lf
             .collect_schema()
-            .with_context(|| "Failed to collect schema from CSV")?
-            .iter_names()
-            .map(|s| s.to_string())
+            .with_context(|| "Failed to collect schema from CSV")?;
+
+        self.cols = schema.iter_names().map(|s| s.to_string()).collect();
+
+        // Store column types for better filtering
+        self.column_types = schema
+            .iter()
+            .map(|(name, dtype)| (name.to_string(), dtype.clone()))
             .collect();
+
+        // Initialize column filters
+        self.column_filters.clear();
+        for col in &self.cols {
+            self.column_filters
+                .insert(col.clone(), ColumnFilter::default());
+        }
 
         self.lf = Some(lf);
         self.path = Some(path_buf);
         self.offset = 0;
-        self.sql_mode = false; // Reset to filter mode when opening new file
-        self.error = None; // Clear any previous errors
+        self.sql_mode = false;
+        self.error = None;
 
         self.try_collect_batch()
             .with_context(|| "Failed to collect initial batch of data")?;
 
+        // Update unique values for each column
+        self.update_unique_values()?;
+
+        Ok(())
+    }
+
+    fn update_unique_values(&mut self) -> Result<()> {
+        if let Some(lf) = &self.lf {
+            for column_name in &self.cols.clone() {
+                let unique_values = lf
+                    .clone()
+                    .select([col(column_name).cast(DataType::String)])
+                    .unique(None, UniqueKeepStrategy::First)
+                    .sort([column_name], SortMultipleOptions::default())
+                    .limit(1000) // Limit to prevent memory issues with large datasets
+                    .collect()?
+                    .column(column_name)?
+                    .str()?
+                    .into_iter()
+                    .filter_map(|opt_val| opt_val.map(|s| s.to_string()))
+                    .collect::<Vec<String>>();
+
+                if let Some(filter) = self.column_filters.get_mut(column_name) {
+                    filter.update_unique_values(unique_values);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -125,11 +285,152 @@ impl TimelineExplorerApp {
         }
     }
 
+    fn build_column_filter_expr(&self, column: &str, filter: &ColumnFilter) -> Option<Expr> {
+        if !filter.enabled || !filter.has_active_filters() {
+            return None;
+        }
+
+        let col_expr = col(column);
+
+        match filter.filter_type {
+            FilterType::IsEmpty => Some(
+                col_expr
+                    .clone()
+                    .is_null()
+                    .or(col_expr.cast(DataType::String).eq(lit(""))),
+            ),
+            FilterType::IsNotEmpty => Some(
+                col_expr
+                    .clone()
+                    .is_not_null()
+                    .and(col_expr.cast(DataType::String).neq(lit(""))),
+            ),
+            FilterType::DateRange => {
+                let mut expr_parts = Vec::new();
+                if !filter.date_from.is_empty() {
+                    if let Ok(date) =
+                        chrono::NaiveDate::parse_from_str(&filter.date_from, "%Y-%m-%d")
+                    {
+                        expr_parts.push(col_expr.clone().cast(DataType::Date).gt_eq(lit(date)));
+                    }
+                }
+                if !filter.date_to.is_empty() {
+                    if let Ok(date) = chrono::NaiveDate::parse_from_str(&filter.date_to, "%Y-%m-%d")
+                    {
+                        expr_parts.push(col_expr.clone().cast(DataType::Date).lt_eq(lit(date)));
+                    }
+                }
+                expr_parts.into_iter().reduce(|acc, expr| acc.and(expr))
+            }
+            _ => {
+                let mut expr_parts = Vec::new();
+
+                // Handle value-based filters
+                if !filter.value.is_empty() {
+                    let value_expr = if filter.case_sensitive {
+                        col_expr.clone().cast(DataType::String)
+                    } else {
+                        col_expr.clone().cast(DataType::String).str().to_lowercase()
+                    };
+
+                    let filter_value = if filter.case_sensitive {
+                        filter.value.clone()
+                    } else {
+                        filter.value.to_lowercase()
+                    };
+
+                    let filter_expr = match filter.filter_type {
+                        FilterType::Contains => {
+                            value_expr.str().contains_literal(lit(filter_value))
+                        }
+                        FilterType::Exact => value_expr.eq(lit(filter_value)),
+                        FilterType::StartsWith => value_expr.str().starts_with(lit(filter_value)),
+                        FilterType::EndsWith => value_expr.str().ends_with(lit(filter_value)),
+                        FilterType::NotContains => {
+                            value_expr.str().contains_literal(lit(filter_value)).not()
+                        }
+                        FilterType::NotEqual => value_expr.neq(lit(filter_value)),
+                        FilterType::GreaterThan => {
+                            if let Ok(num) = filter.value.parse::<f64>() {
+                                col_expr.clone().cast(DataType::Float64).gt(lit(num))
+                            } else {
+                                value_expr.gt(lit(filter_value))
+                            }
+                        }
+                        FilterType::LessThan => {
+                            if let Ok(num) = filter.value.parse::<f64>() {
+                                col_expr.clone().cast(DataType::Float64).lt(lit(num))
+                            } else {
+                                value_expr.lt(lit(filter_value))
+                            }
+                        }
+                        FilterType::GreaterEqual => {
+                            if let Ok(num) = filter.value.parse::<f64>() {
+                                col_expr.clone().cast(DataType::Float64).gt_eq(lit(num))
+                            } else {
+                                value_expr.gt_eq(lit(filter_value))
+                            }
+                        }
+                        FilterType::LessEqual => {
+                            if let Ok(num) = filter.value.parse::<f64>() {
+                                col_expr.clone().cast(DataType::Float64).lt_eq(lit(num))
+                            } else {
+                                value_expr.lt_eq(lit(filter_value))
+                            }
+                        }
+                        _ => return None,
+                    };
+                    expr_parts.push(filter_expr);
+                }
+
+                // Handle selected values filter
+                let selected_values: Vec<String> = filter
+                    .selected_values
+                    .iter()
+                    .filter_map(
+                        |(value, &selected)| if selected { Some(value.clone()) } else { None },
+                    )
+                    .collect();
+
+                if selected_values.len() < filter.unique_values.len()
+                    && !filter.unique_values.is_empty()
+                {
+                    let values_expr = col_expr
+                        .cast(DataType::String)
+                        .is_in(lit(Series::new("".into(), selected_values)), false);
+                    expr_parts.push(values_expr);
+                }
+
+                expr_parts.into_iter().reduce(|acc, expr| acc.and(expr))
+            }
+        }
+    }
+
     fn try_collect_filtered_batch(&mut self, lf: &LazyFrame) -> Result<()> {
         let mut q = lf.clone();
 
+        // Apply column filters
+        let filter_exprs: Vec<Expr> = self
+            .cols
+            .iter()
+            .filter_map(|col| {
+                self.column_filters
+                    .get(col)
+                    .and_then(|filter| self.build_column_filter_expr(col, filter))
+            })
+            .collect();
+
+        if !filter_exprs.is_empty() {
+            let combined_filter = filter_exprs
+                .into_iter()
+                .reduce(|acc, e| acc.and(e))
+                .with_context(|| "No valid column filters")?;
+            q = q.filter(combined_filter);
+        }
+
+        // Apply global text filter
         if !self.filter.is_empty() {
-            let filter_exprs: Vec<Expr> = self
+            let global_filter_exprs: Vec<Expr> = self
                 .cols
                 .iter()
                 .map(|c| {
@@ -140,12 +441,14 @@ impl TimelineExplorerApp {
                 })
                 .collect();
 
-            let combined_filter = filter_exprs
-                .into_iter()
-                .reduce(|acc, e| acc.or(e))
-                .with_context(|| "No columns available for filtering")?;
+            if !global_filter_exprs.is_empty() {
+                let combined_global_filter = global_filter_exprs
+                    .into_iter()
+                    .reduce(|acc, e| acc.or(e))
+                    .with_context(|| "No columns available for global filtering")?;
 
-            q = q.filter(combined_filter);
+                q = q.filter(combined_global_filter);
+            }
         }
 
         q = q.slice(self.offset as i64, self.page as u32);
@@ -195,6 +498,224 @@ impl TimelineExplorerApp {
 
         Ok(value.to_string())
     }
+
+    fn clear_all_filters(&mut self) {
+        for filter in self.column_filters.values_mut() {
+            filter.enabled = false;
+            filter.value.clear();
+            filter.date_from.clear();
+            filter.date_to.clear();
+            for selected in filter.selected_values.values_mut() {
+                *selected = true;
+            }
+        }
+        self.filter.clear();
+        self.offset = 0;
+        self.collect_batch();
+    }
+
+    fn render_filter_panel(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Column Filters:");
+            if ui.button("Clear All").clicked() {
+                self.clear_all_filters();
+            }
+            ui.separator();
+            ui.checkbox(&mut self.show_filters, "Show Filters");
+        });
+
+        if !self.show_filters {
+            return;
+        }
+
+        let cols_clone = self.cols.clone();
+        egui::ScrollArea::horizontal().show(ui, |ui| {
+            ui.horizontal(|ui| {
+                for col in &cols_clone {
+                    let has_active_filters = self
+                        .column_filters
+                        .get(col)
+                        .map(|f| f.has_active_filters())
+                        .unwrap_or(false);
+
+                    ui.vertical(|ui| {
+                        ui.set_width(200.0);
+
+                        // Column header with filter indicator
+                        ui.horizontal(|ui| {
+                            let color = if has_active_filters {
+                                Color32::from_rgb(100, 150, 255)
+                            } else {
+                                ui.style().visuals.text_color()
+                            };
+                            ui.colored_label(color, RichText::new(col).strong());
+
+                            if has_active_filters {
+                                ui.colored_label(Color32::from_rgb(255, 150, 100), "●");
+                            }
+                        });
+
+                        ui.separator();
+
+                        // Get filter values to avoid multiple borrows
+                        let (
+                            mut enabled,
+                            mut filter_type,
+                            mut value,
+                            mut date_from,
+                            mut date_to,
+                            mut case_sensitive,
+                            unique_values,
+                            selected_values,
+                        ) = {
+                            let filter = self.column_filters.get(col).unwrap();
+                            (
+                                filter.enabled,
+                                filter.filter_type.clone(),
+                                filter.value.clone(),
+                                filter.date_from.clone(),
+                                filter.date_to.clone(),
+                                filter.case_sensitive,
+                                filter.unique_values.clone(),
+                                filter.selected_values.clone(),
+                            )
+                        };
+
+                        // Enable/disable filter
+                        if ui.checkbox(&mut enabled, "Enable Filter").changed() {
+                            if let Some(filter) = self.column_filters.get_mut(col) {
+                                filter.enabled = enabled;
+                            }
+                        }
+
+                        if enabled {
+                            // Filter type selection
+                            egui::ComboBox::from_label("Type")
+                                .selected_text(filter_type.display_name())
+                                .show_ui(ui, |ui| {
+                                    for ft in FilterType::all() {
+                                        if ui
+                                            .selectable_value(
+                                                &mut filter_type,
+                                                ft.clone(),
+                                                ft.display_name(),
+                                            )
+                                            .changed()
+                                        {
+                                            if let Some(filter) = self.column_filters.get_mut(col) {
+                                                filter.filter_type = filter_type.clone();
+                                            }
+                                        }
+                                    }
+                                });
+
+                            // Filter controls based on type
+                            match filter_type {
+                                FilterType::DateRange => {
+                                    ui.label("From:");
+                                    if ui.text_edit_singleline(&mut date_from).changed() {
+                                        if let Some(filter) = self.column_filters.get_mut(col) {
+                                            filter.date_from = date_from.clone();
+                                        }
+                                    }
+                                    ui.label("To:");
+                                    if ui.text_edit_singleline(&mut date_to).changed() {
+                                        if let Some(filter) = self.column_filters.get_mut(col) {
+                                            filter.date_to = date_to.clone();
+                                        }
+                                    }
+                                    ui.small("Format: YYYY-MM-DD");
+                                }
+                                FilterType::IsEmpty | FilterType::IsNotEmpty => {
+                                    ui.label("No additional settings");
+                                }
+                                _ => {
+                                    ui.label("Value:");
+                                    if ui.text_edit_singleline(&mut value).changed() {
+                                        if let Some(filter) = self.column_filters.get_mut(col) {
+                                            filter.value = value.clone();
+                                        }
+                                        self.offset = 0;
+                                        self.collect_batch();
+                                    }
+
+                                    if matches!(
+                                        filter_type,
+                                        FilterType::Contains
+                                            | FilterType::NotContains
+                                            | FilterType::Exact
+                                            | FilterType::NotEqual
+                                    ) {
+                                        if ui
+                                            .checkbox(&mut case_sensitive, "Case sensitive")
+                                            .changed()
+                                        {
+                                            if let Some(filter) = self.column_filters.get_mut(col) {
+                                                filter.case_sensitive = case_sensitive;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Unique values selection
+                            if !unique_values.is_empty() {
+                                ui.separator();
+                                ui.label("Select values:");
+
+                                ui.horizontal(|ui| {
+                                    if ui.small_button("All").clicked() {
+                                        if let Some(filter) = self.column_filters.get_mut(col) {
+                                            for selected in filter.selected_values.values_mut() {
+                                                *selected = true;
+                                            }
+                                        }
+                                        self.offset = 0;
+                                        self.collect_batch();
+                                    }
+                                    if ui.small_button("None").clicked() {
+                                        if let Some(filter) = self.column_filters.get_mut(col) {
+                                            for selected in filter.selected_values.values_mut() {
+                                                *selected = false;
+                                            }
+                                        }
+                                        self.offset = 0;
+                                        self.collect_batch();
+                                    }
+                                });
+
+                                egui::ScrollArea::vertical()
+                                    .max_height(150.0)
+                                    .show(ui, |ui| {
+                                        for value in &unique_values {
+                                            let mut selected =
+                                                selected_values.get(value).copied().unwrap_or(true);
+                                            if ui.checkbox(&mut selected, value).changed() {
+                                                if let Some(filter) =
+                                                    self.column_filters.get_mut(col)
+                                                {
+                                                    filter
+                                                        .selected_values
+                                                        .insert(value.clone(), selected);
+                                                }
+                                                self.offset = 0;
+                                                self.collect_batch();
+                                            }
+                                        }
+                                    });
+                            }
+
+                            if ui.button("Apply Filter").clicked() {
+                                self.offset = 0;
+                                self.collect_batch();
+                            }
+                        }
+                    });
+                    ui.separator();
+                }
+            });
+        });
+    }
 }
 
 impl App for TimelineExplorerApp {
@@ -242,17 +763,23 @@ impl App for TimelineExplorerApp {
                     }
                 } else {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.text_edit_singleline(&mut self.filter).lost_focus()
-                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        {
+                        let response = ui.text_edit_singleline(&mut self.filter);
+                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             self.offset = 0;
                             self.collect_batch();
                         }
-                        ui.label("Filter:");
+                        ui.label("Global Search:");
                     });
                 }
             });
         });
+
+        // Filter panel (only show in filter mode)
+        if !self.sql_mode && self.lf.is_some() {
+            egui::TopBottomPanel::top("filters").show(ctx, |ui| {
+                self.render_filter_panel(ui);
+            });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(err) = &self.error {
@@ -283,7 +810,21 @@ impl App for TimelineExplorerApp {
                     .header(20.0, |mut header| {
                         for col in &current_cols {
                             header.col(|ui| {
-                                ui.strong(col);
+                                // Show filter indicator in header
+                                let has_filter = self
+                                    .column_filters
+                                    .get(col)
+                                    .map(|f| f.has_active_filters())
+                                    .unwrap_or(false);
+
+                                if has_filter {
+                                    ui.horizontal(|ui| {
+                                        ui.colored_label(Color32::from_rgb(100, 150, 255), "●");
+                                        ui.strong(col);
+                                    });
+                                } else {
+                                    ui.strong(col);
+                                }
                             });
                         }
                     })
@@ -318,6 +859,20 @@ impl App for TimelineExplorerApp {
                             self.offset + 1,
                             self.offset + n_rows
                         ));
+
+                        // Show active filter count
+                        let active_filters = self
+                            .column_filters
+                            .values()
+                            .filter(|f| f.has_active_filters())
+                            .count();
+                        if active_filters > 0 {
+                            ui.separator();
+                            ui.colored_label(
+                                Color32::from_rgb(100, 150, 255),
+                                format!("{} active filter(s)", active_filters),
+                            );
+                        }
                     } else {
                         ui.label(format!("Query returned {} rows", n_rows));
                     }
