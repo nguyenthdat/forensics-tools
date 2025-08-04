@@ -45,3 +45,36 @@ winstructs = "0.3.0"
 dirs = "6.0.0"
 polars = { version = "0.50.0", features = ["full"] }
 rayon = "1.10.0"
+num_cpus = "1.17.0"
+speedate = "0.16.0"
+lexical-core = "1.0.5"
+rustyline = { version = "17.0.0", features = [
+    "buffer-redux",
+    "derive",
+    "regex",
+    "rusqlite",
+    "signal-hook",
+    "with-fuzzy",
+    "with-sqlite-history",
+] }
+rusqlite = "0.37.0"
+tracing-subscriber = { version = "0.3.19", features = [
+    "env-filter",
+    "fmt",
+    "std",
+    "tracing-log",
+] }
+time = { version = "0.3.41", features = [
+    "serde",
+    "parsing",
+    "macros",
+    "large-dates",
+    "local-offset",
+    "serde-human-readable",
+    "serde-well-known",
+    "quickcheck",
+    "formatting",
+] }
+bon = { version = "3.6.5" }
+tantivy-query-grammar = "0.24.0"
+nom = { version = "7.1.3" }
