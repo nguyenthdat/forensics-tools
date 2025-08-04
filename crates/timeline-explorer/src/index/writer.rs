@@ -16,8 +16,8 @@ pub fn index_csv<P: AsRef<Path>>(
     // 1. determine schema from sample
     let (schema, fields) = infer_schema_from_csv(&csv_path, sample_rows)?;
 
-    // Get the idx field from the schema
-    let idx_field = schema.get_field("idx")?;
+    // Get the row_id field from the schema
+    let row_id_field = schema.get_field("row_id")?;
 
     // 2. create index & writer
     let index = Index::create_in_dir(index_dir, schema.clone())?;
@@ -38,17 +38,17 @@ pub fn index_csv<P: AsRef<Path>>(
     let documents: Vec<TantivyDocument> = records
         .into_par_iter()
         .enumerate()
-        .filter_map(|(row_idx, rec)| {
+        .filter_map(|(row_id, rec)| {
             let mut doc = TantivyDocument::default();
             let schema = Arc::clone(&schema_arc);
             let fields = Arc::clone(&fields_arc);
-            doc.add_u64(idx_field, row_idx as u64);
-            for (idx, value) in rec.iter().enumerate() {
-                if idx >= fields.len() {
+            doc.add_u64(row_id_field, row_id as u64);
+            for (row_id, value) in rec.iter().enumerate() {
+                if row_id >= fields.len() {
                     break;
                 }
 
-                let field = fields[idx];
+                let field = fields[row_id];
                 let schema_field = schema.get_field_entry(field);
 
                 if value.is_empty() {
@@ -115,7 +115,7 @@ pub fn index_csv_streaming<P: AsRef<Path>>(
 
     // --- 1. schema -----------------------------------------------------------
     let (schema, fields) = infer_schema_from_csv(&csv_path, sample_rows)?;
-    let idx_field = schema.get_field("idx")?;
+    let row_id_field = schema.get_field("row_id")?;
 
     // --- 2. writer -----------------------------------------------------------
     let index = Index::create_in_dir(index_dir, schema.clone())?;
@@ -135,7 +135,7 @@ pub fn index_csv_streaming<P: AsRef<Path>>(
 
     while rdr.read_byte_record(&mut rec)? {
         let mut doc = TantivyDocument::default();
-        doc.add_u64(idx_field, rdr.position().line() as u64); // unique row id
+        doc.add_u64(row_id_field, rdr.position().line() as u64); // unique row id
 
         for (i, bytes) in rec.iter().enumerate() {
             if bytes.is_empty() || i >= col_meta.len() {
