@@ -52,6 +52,14 @@ workspace = true
 default-features = false
 features = ["clock", "serde", "std"]
 
+[dev-dependencies]
+criterion = { workspace = true }
+tempfile = "3.0"
+
+[[bench]]
+name = "csv_indexing_benchmark"
+harness = false
+
 [[bin]]
 name = "timeline-explorer-cli"
 path = "src/bin/cli.rs"
