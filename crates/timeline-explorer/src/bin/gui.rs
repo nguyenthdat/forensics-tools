@@ -1,5 +1,5 @@
 use anyhow::{Context as AnyhowContext, Result};
-use eframe::{App, NativeOptions, egui};
+use eframe::{egui, App, NativeOptions};
 use egui::{Color32, Context, RichText};
 use egui_extras::{Column, TableBuilder};
 use polars::prelude::*;

@@ -8,3 +8,5 @@ homepage.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow.workspace = true
+eframe = { workspace = true, features = ["persistence", "serde", "wgpu"] }

@@ -1,11 +1,6 @@
 [workspace]
 resolver = "3"
-members = [
-    "crates/mft",
-    "crates/qsv",
-    "crates/timeline-explorer",
-    "crates/waka",
-]
+members = ["crates/mft", "crates/qsv", "crates/waka"]
 
 [workspace.package]
 version = "0.0.1"
@@ -20,6 +15,7 @@ mtf = { version = "0.6.1", default-features = false, path = "crates/mft" }
 
 tokio = { version = "1", features = ["full"] }
 anyhow = { version = "1.0" }
+
 assert_cmd = "2.0"
 bitflags = "2.9.1"
 byteorder = "1"
@@ -67,7 +63,6 @@ time = { version = "0.3.41", features = [
     "formatting",
 ] }
 
-nom = { version = "8.0.0" }
 bon = { version = "3.6.5" }
 num_cpus = "1.17.0"
 speedate = "0.17.0"
@@ -76,16 +71,16 @@ csv = "1"
 tantivy = { version = "0.24.2" }
 tantivy-query-grammar = "0.24.0"
 tantivy-derive = { git = "https://github.com/nguyenthdat/tantivy-derive.git" }
-rustyline = { version = "17.0.0", features = [
-    "buffer-redux",
-    "derive",
-    "regex",
-    "rusqlite",
-    "signal-hook",
-    "with-fuzzy",
-    "with-sqlite-history",
-] }
-rusqlite = "0.37.0"
+# rustyline = { version = "17.0.0", features = [
+#     "buffer-redux",
+#     "derive",
+#     "regex",
+#     "rusqlite",
+#     "signal-hook",
+#     "with-fuzzy",
+#     "with-sqlite-history",
+# ] }
+# rusqlite = "0.37.0"
 
 eframe = "0.32.0"
 egui = "0.32.0"
@@ -117,3 +112,81 @@ polars-sql = { version = "0.50.0", features = [
 
 criterion = "0.7.0"
 clap = { version = "4" }
+
+[profile.release]
+codegen-units = 1
+debug = false
+lto = true
+opt-level = 3
+strip = true
+
+[profile.release-samply]
+inherits = "release"
+debug = true
+strip = false
+
+[profile.release-nightly]
+inherits = "release"
+panic = "abort"
+
+[patch.crates-io]
+# use our tweaked fork of csv crate
+# the csv crate underpins a lot of qsv's functionality, so every perf tweak helps
+# the main feature of this csv fork is accelerated UTF-8 validation using the simdutf8 crate
+# non-allocating ByteRecord trim and a non-allocating StringRecord trim_ascii
+csv = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
+csv-core = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
+csv-index = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
+
+# use our patched fork of csvlens to add natural sort until our PR is merged
+csvlens = { git = "https://github.com/jqnatividad/csvlens", branch = "133-natural-sort" }
+
+# use our patched fork of csvs_convert to bump dependencies until our PR is merged
+csvs_convert = { git = "https://github.com/jqnatividad/csvs_convert", branch = "bump-rust_xlsxwriter-to-0.88" }
+
+# use unreleased upstream fixes for dns-lookup
+dns-lookup = { git = "https://github.com/keeperofdakeys/dns-lookup", rev = "7745e71" }
+
+# use our patched fork of grex to bump dependencies and Unicode tables from 15 to 16 until our PR is merged
+grex = { git = "https://github.com/jqnatividad/grex", branch = "bumped-dependencies-202502" }
+
+# use our patched fork of json-objects-to-csv to bump deps and to preserve order until our PR is merged
+json-objects-to-csv = { git = "https://github.com/jqnatividad/json-objects-to-csv", branch = "preserve_order_issue_10" }
+
+# use our patched fork of localzone to bump dependencies until our PR is merged
+localzone = { git = "https://github.com/jqnatividad/localzone", branch = "bump-deps-may2025" }
+
+# use v1 branch with unreleased fixes and features
+rust_decimal = { git = "https://github.com/paupino/rust-decimal", branch = "v1" }
+
+# use our patched fork of self_update to bump zip 2 to 4, until our PR is merged
+self_update = { git = "https://github.com/jqnatividad/self_update", branch = "bump-deps-july2025" }
+
+# use our patched fork of sled to get rid of unmaintained instant
+sled = { git = "https://github.com/dathere/sled", branch = "v0.34.7-bumped-parking_lot_to_0.12" }
+
+# Polars has a much higher release tempo for its Python bindings compared
+# to its underlying Rust library. See https://github.com/pola-rs/polars/releases
+# It's qsv's policy to use the latest upstream of polars/py-polars
+# to take advantage of Polars' latest unreleased fixes and features.
+# Based on what's available at the time of qsv's release, we may need to pin polars to a py-polars tag
+# or a specific commit if more revisions have been made since the latest polars/py-polars release.
+# BUILD NOTE: Be sure to set QSV_POLARS_REV below to the latest commit short hash or tag 
+# of polars/py-polars before building qsv. This allows us to show the polars rev/tag in --version.
+# The convention to use for QSV_POLARS_REV is:
+# - if we are using a release version of Rust Polars, leave QSV_POLARS_REV empty
+# - if we are using a release version of Python Polars, use the Python tag
+#   (e.g. py-1.19.0)
+# - if we are using a commit hash, separate the tag and commit hash with a colon, in the order of
+#   - Python Polars tag
+#   - short commit hash
+#     (e.g. py-1.19.0:52ea381 to indicate that we are Python Polars 1.19.0,
+#      and the commit hash 52ea381)
+# ================================
+# QSV_POLARS_REV=
+# polars = { git = "https://github.com/pola-rs/polars", tag = "py-1.32.0" }
+# polars = { git = "https://github.com/pola-rs/polars", rev = "2391dfb" }
+# polars-ops = { git = "https://github.com/pola-rs/polars", tag = "py-1.32.0" }
+# polars-ops = { git = "https://github.com/pola-rs/polars", rev = "2391dfb" }
+# polars-utils = { git = "https://github.com/pola-rs/polars", tag = "py-1.32.0" }
+# polars-utils = { git = "https://github.com/pola-rs/polars", rev = "2391dfb" }
