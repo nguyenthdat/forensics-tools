@@ -16,25 +16,21 @@ homepage = "https://github.com/nguyenthdat/forensics-tools"
 license = "MIT"
 
 [workspace.dependencies]
+mtf = { version = "0.6.1", default-features = false, path = "crates/mft" }
+
 tokio = { version = "1", features = ["full"] }
 anyhow = { version = "1.0" }
 assert_cmd = "2.0"
 bitflags = "2.9.1"
 byteorder = "1"
 chrono = { version = "0.4", default-features = false }
-clap = { version = "4" }
-criterion = "0.7.0"
-csv = "1"
 dialoguer = { version = "0.11.0" }
-eframe = "0.32.0"
-egui = "0.32.0"
 encoding = "0.2"
 env_logger = "0.11.8"
 indoc = { version = "2.0" }
 itertools = "0.14.0"
 log = { version = "0.4.27" }
 lru = "0.16.0"
-mtf = { version = "0.6.1", default-features = false, path = "crates/mft" }
 num-derive = "0.4.2"
 num-traits = "0.2"
 predicates = "3.1.3"
@@ -44,32 +40,21 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 simplelog = { version = "0.12" }
 skeptic = "0.13"
-tantivy = { version = "0.24.2" }
-tempfile = "3.2"
+tempfile = "3.20.0"
 thiserror = "2.0.12"
 winstructs = "0.3.0"
 dirs = "6.0.0"
-polars = { version = "0.50.0", features = ["full"] }
 rayon = "1.10.0"
-num_cpus = "1.17.0"
-speedate = "0.17.0"
 lexical-core = "1.0.5"
-rustyline = { version = "17.0.0", features = [
-    "buffer-redux",
-    "derive",
-    "regex",
-    "rusqlite",
-    "signal-hook",
-    "with-fuzzy",
-    "with-sqlite-history",
-] }
-rusqlite = "0.37.0"
+
+tracing = { version = "0.1.41" }
 tracing-subscriber = { version = "0.3.19", features = [
     "env-filter",
     "fmt",
     "std",
     "tracing-log",
 ] }
+
 time = { version = "0.3.41", features = [
     "serde",
     "parsing",
@@ -81,9 +66,29 @@ time = { version = "0.3.41", features = [
     "quickcheck",
     "formatting",
 ] }
-bon = { version = "3.6.5" }
-tantivy-query-grammar = "0.24.0"
+
 nom = { version = "8.0.0" }
+bon = { version = "3.6.5" }
+num_cpus = "1.17.0"
+speedate = "0.17.0"
+csv = "1"
+
+tantivy = { version = "0.24.2" }
+tantivy-query-grammar = "0.24.0"
+tantivy-derive = { git = "https://github.com/nguyenthdat/tantivy-derive.git" }
+rustyline = { version = "17.0.0", features = [
+    "buffer-redux",
+    "derive",
+    "regex",
+    "rusqlite",
+    "signal-hook",
+    "with-fuzzy",
+    "with-sqlite-history",
+] }
+rusqlite = "0.37.0"
+
+eframe = "0.32.0"
+egui = "0.32.0"
 egui_extras = { version = "0.32.0", features = [
     "all_loaders",
     "chrono",
@@ -98,7 +103,8 @@ rfd = { version = "0.15.4", features = [
     "common-controls-v6",
     "file-handle-inner",
 ] }
-encoding_rs = "0.8.35"
+
+polars = { version = "0.50.0", features = ["full"] }
 polars-sql = { version = "0.50.0", features = [
     "csv",
     "json",
@@ -108,3 +114,6 @@ polars-sql = { version = "0.50.0", features = [
     "binary_encoding",
     "dtype-decimal",
 ] }
+
+criterion = "0.7.0"
+clap = { version = "4" }

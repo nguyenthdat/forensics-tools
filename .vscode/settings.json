@@ -1,0 +1,20 @@
+{
+  "files.autoSave": "afterDelay",
+  "editor.defaultFormatter": "rust-lang.rust-analyzer",
+  "editor.wordWrap": "on",
+  "workbench.colorTheme": "GitHub Dark",
+  "rust-analyzer.restartServerOnConfigChange": true,
+  "rust-analyzer.linkedProjects": ["Cargo.toml"],
+  "rust-analyzer.numThreads": 8,
+  "rust-analyzer.testExplorer": true,
+  "rust-analyzer.showSyntaxTree": true,
+  "rust-analyzer.check.workspace": false,
+  "rust-analyzer.cachePriming.numThreads": "physical",
+  "rust-analyzer.cargo.features": "all",
+  "[toml]": {
+    "editor.defaultFormatter": "tamasfe.even-better-toml"
+  },
+  "rust-analyzer.check.features": "all",
+  "rust-analyzer.debug.engine": "llvm-vs-code-extensions.lldb-dap",
+  "editor.formatOnSave": true
+}
