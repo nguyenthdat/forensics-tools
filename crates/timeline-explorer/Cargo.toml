@@ -55,9 +55,21 @@ egui_extras = { version = "0.32.0", features = [
     "svg_text",
     "syntect",
 ] }
-rfd = { version = "0.15.4", features = ["tokio", "common-controls-v6", "file-handle-inner"] }
+rfd = { version = "0.15.4", features = [
+    "tokio",
+    "common-controls-v6",
+    "file-handle-inner",
+] }
 encoding_rs = "0.8.35"
-polars-sql = { version = "0.50.0", features = ["csv", "json", "serde", "parquet", "timezones", "binary_encoding", "dtype-decimal"] }
+polars-sql = { version = "0.50.0", features = [
+    "csv",
+    "json",
+    "serde",
+    "parquet",
+    "timezones",
+    "binary_encoding",
+    "dtype-decimal",
+] }
 
 [dependencies.chrono]
 workspace = true

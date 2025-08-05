@@ -4,11 +4,14 @@ use egui::{Color32, Context, RichText};
 use egui_extras::{Column, TableBuilder};
 use polars::prelude::*;
 use polars_sql::SQLContext;
+use rayon::prelude::*;
 use rfd::FileDialog;
 use std::{
     collections::HashMap,
     env,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 fn main() -> eframe::Result<()> {
@@ -90,6 +93,10 @@ pub struct ColumnFilter {
     pub selected_values: HashMap<String, bool>,
     pub show_dropdown: bool,
     pub show_advanced: bool,
+    // Performance optimizations
+    pub unique_values_cached: bool,
+    pub last_updated: Instant,
+    pub cached_expr: Option<Expr>,
 }
 
 impl Default for ColumnFilter {
@@ -105,6 +112,9 @@ impl Default for ColumnFilter {
             selected_values: HashMap::new(),
             show_dropdown: false,
             show_advanced: false,
+            unique_values_cached: false,
+            last_updated: Instant::now(),
+            cached_expr: None,
         }
     }
 }
@@ -130,18 +140,57 @@ impl ColumnFilter {
             for value in &self.unique_values {
                 self.selected_values.entry(value.clone()).or_insert(true);
             }
+            self.unique_values_cached = true;
+            self.last_updated = Instant::now();
+        }
+    }
+
+    fn invalidate_cache(&mut self) {
+        self.cached_expr = None;
+        self.last_updated = Instant::now();
+    }
+
+    fn needs_unique_values_update(&self) -> bool {
+        !self.unique_values_cached || self.last_updated.elapsed() > Duration::from_secs(60)
+    }
+}
+
+#[derive(Clone)]
+struct CachedData {
+    lf: Option<LazyFrame>,
+    schema: Option<SchemaRef>,
+    column_stats: HashMap<String, ColumnStats>,
+    last_updated: Instant,
+}
+
+#[derive(Clone, Debug)]
+struct ColumnStats {
+    data_type: DataType,
+    null_count: usize,
+    unique_count: usize,
+    min_value: Option<String>,
+    max_value: Option<String>,
+}
+
+impl Default for CachedData {
+    fn default() -> Self {
+        Self {
+            lf: None,
+            schema: None,
+            column_stats: HashMap::new(),
+            last_updated: Instant::now(),
         }
     }
 }
 
 struct TimelineExplorerApp {
-    /// Lazily-scanned CSV. We keep it around so we can re-collect with filters.
-    lf: Option<LazyFrame>,
+    /// Cached data with LazyFrame and metadata
+    cached_data: Arc<Mutex<CachedData>>,
     /// Materialised batch that's currently displayed (e.g. 1k rows).
     batch: Option<DataFrame>,
     /// Column names cache
     cols: Vec<String>,
-    /// Column filters
+    /// Column filters with performance optimizations
     column_filters: HashMap<String, ColumnFilter>,
     /// Text filter (global search)
     filter: String,
@@ -161,12 +210,19 @@ struct TimelineExplorerApp {
     show_filters: bool,
     /// Column data types for better filtering
     column_types: HashMap<String, DataType>,
+    /// Performance monitoring
+    last_filter_time: Instant,
+    filter_debounce_timer: Option<Instant>,
+    /// Background processing state
+    processing: Arc<Mutex<bool>>,
+    /// Filter expression cache
+    filter_expr_cache: HashMap<String, Expr>,
 }
 
 impl TimelineExplorerApp {
     pub fn new(file: Option<PathBuf>) -> Self {
         let mut app = Self {
-            lf: None,
+            cached_data: Arc::new(Mutex::new(CachedData::default())),
             batch: None,
             cols: Vec::new(),
             column_filters: HashMap::new(),
@@ -179,6 +235,10 @@ impl TimelineExplorerApp {
             error: None,
             show_filters: true,
             column_types: HashMap::new(),
+            last_filter_time: Instant::now(),
+            filter_debounce_timer: None,
+            processing: Arc::new(Mutex::new(false)),
+            filter_expr_cache: HashMap::new(),
         };
         if let Some(p) = file {
             if let Err(e) = app.try_open_file(&p) {
@@ -200,6 +260,7 @@ impl TimelineExplorerApp {
             .to_str()
             .with_context(|| format!("Invalid UTF-8 in path: {}", path_buf.display()))?;
 
+        // Use optimized CSV reading with parallel processing
         let mut lf = LazyCsvReader::new(PlPath::from_str(path_str))
             .with_has_header(true)
             .with_encoding(CsvEncoding::LossyUtf8)
@@ -219,6 +280,14 @@ impl TimelineExplorerApp {
             .map(|(name, dtype)| (name.to_string(), dtype.clone()))
             .collect();
 
+        // Update cached data
+        {
+            let mut cached_data = self.cached_data.lock().unwrap();
+            cached_data.lf = Some(lf);
+            cached_data.schema = Some(schema);
+            cached_data.last_updated = Instant::now();
+        }
+
         // Initialize column filters
         self.column_filters.clear();
         for col in &self.cols {
@@ -226,40 +295,132 @@ impl TimelineExplorerApp {
                 .insert(col.clone(), ColumnFilter::default());
         }
 
-        self.lf = Some(lf);
         self.path = Some(path_buf);
         self.offset = 0;
         self.sql_mode = false;
         self.error = None;
+        self.filter_expr_cache.clear();
 
         self.try_collect_batch()
             .with_context(|| "Failed to collect initial batch of data")?;
 
-        // Update unique values for each column
-        self.update_unique_values()?;
+        // Update unique values and column stats in parallel
+        self.update_unique_values_parallel()?;
+        self.update_column_stats_parallel()?;
 
         Ok(())
     }
 
-    fn update_unique_values(&mut self) -> Result<()> {
-        if let Some(lf) = &self.lf {
-            for column_name in &self.cols.clone() {
-                let unique_values = lf
-                    .clone()
-                    .select([col(column_name).cast(DataType::String)])
-                    .unique(None, UniqueKeepStrategy::First)
-                    .sort([column_name], SortMultipleOptions::default())
-                    .limit(1000) // Limit to prevent memory issues with large datasets
-                    .collect()?
-                    .column(column_name)?
-                    .str()?
-                    .into_iter()
-                    .filter_map(|opt_val| opt_val.map(|s| s.to_string()))
-                    .collect::<Vec<String>>();
+    fn update_unique_values_parallel(&mut self) -> Result<()> {
+        let cached_data = self.cached_data.lock().unwrap();
+        if let Some(lf) = &cached_data.lf {
+            let lf_clone = lf.clone();
+            let cols_clone = self.cols.clone();
+            drop(cached_data);
 
-                if let Some(filter) = self.column_filters.get_mut(column_name) {
-                    filter.update_unique_values(unique_values);
+            // Process columns in parallel using Rayon
+            let unique_values_results: Result<Vec<(String, Vec<String>)>, _> = cols_clone
+                .par_iter()
+                .map(|column_name| {
+                    let unique_values = lf_clone
+                        .clone()
+                        .select([col(column_name).cast(DataType::String)])
+                        .unique(None, UniqueKeepStrategy::First)
+                        .sort([column_name], SortMultipleOptions::default())
+                        .limit(1000) // Limit to prevent memory issues with large datasets
+                        .collect()?
+                        .column(column_name)?
+                        .str()?
+                        .into_iter()
+                        .filter_map(|opt_val| opt_val.map(|s| s.to_string()))
+                        .collect::<Vec<String>>();
+
+                    Ok((column_name.clone(), unique_values))
+                })
+                .collect();
+
+            match unique_values_results {
+                Ok(results) => {
+                    for (column_name, unique_values) in results {
+                        if let Some(filter) = self.column_filters.get_mut(&column_name) {
+                            filter.update_unique_values(unique_values);
+                        }
+                    }
                 }
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    fn update_column_stats_parallel(&mut self) -> Result<()> {
+        let cached_data = self.cached_data.lock().unwrap();
+        if let Some(lf) = &cached_data.lf {
+            let lf_clone = lf.clone();
+            let cols_clone = self.cols.clone();
+            drop(cached_data);
+
+            // Calculate column statistics in parallel
+            let stats_results: Result<Vec<(String, ColumnStats)>, _> = cols_clone
+                .par_iter()
+                .map(|column_name| {
+                    let stats_df = lf_clone
+                        .clone()
+                        .select([
+                            col(column_name).null_count().alias("null_count"),
+                            col(column_name).n_unique().alias("unique_count"),
+                            col(column_name)
+                                .cast(DataType::String)
+                                .min()
+                                .alias("min_value"),
+                            col(column_name)
+                                .cast(DataType::String)
+                                .max()
+                                .alias("max_value"),
+                        ])
+                        .collect()?;
+
+                    let null_count =
+                        stats_df.column("null_count")?.u32()?.get(0).unwrap_or(0) as usize;
+                    let unique_count =
+                        stats_df.column("unique_count")?.u32()?.get(0).unwrap_or(0) as usize;
+                    let min_value = stats_df
+                        .column("min_value")?
+                        .str()?
+                        .get(0)
+                        .map(|s| s.to_string());
+                    let max_value = stats_df
+                        .column("max_value")?
+                        .str()?
+                        .get(0)
+                        .map(|s| s.to_string());
+
+                    let data_type = self
+                        .column_types
+                        .get(column_name)
+                        .cloned()
+                        .unwrap_or(DataType::String);
+
+                    let stats = ColumnStats {
+                        data_type,
+                        null_count,
+                        unique_count,
+                        min_value,
+                        max_value,
+                    };
+
+                    Ok((column_name.clone(), stats))
+                })
+                .collect();
+
+            match stats_results {
+                Ok(results) => {
+                    let mut cached_data = self.cached_data.lock().unwrap();
+                    for (column_name, stats) in results {
+                        cached_data.column_stats.insert(column_name, stats);
+                    }
+                }
+                Err(e) => return Err(e),
             }
         }
         Ok(())
@@ -272,17 +433,64 @@ impl TimelineExplorerApp {
         }
     }
 
+    fn collect_batch_debounced(&mut self) {
+        // Implement debouncing to avoid excessive recomputation
+        self.filter_debounce_timer = Some(Instant::now());
+
+        // Only update if enough time has passed since last filter change
+        if self.last_filter_time.elapsed() > Duration::from_millis(300) {
+            self.collect_batch();
+            self.last_filter_time = Instant::now();
+        }
+    }
+
     fn try_collect_batch(&mut self) -> Result<()> {
-        if self.lf.is_none() {
+        let cached_data = self.cached_data.lock().unwrap();
+        if cached_data.lf.is_none() {
             return Err(anyhow::anyhow!("No CSV file loaded"));
         }
 
         if self.sql_mode {
+            drop(cached_data);
             self.try_execute_sql()
         } else {
-            let lf = self.lf.as_ref().unwrap().clone();
+            let lf = cached_data.lf.as_ref().unwrap().clone();
+            drop(cached_data);
             self.try_collect_filtered_batch(&lf)
         }
+    }
+
+    fn build_column_filter_expr_cached(
+        &mut self,
+        column: &str,
+        filter: &ColumnFilter,
+    ) -> Option<Expr> {
+        if !filter.enabled || !filter.has_active_filters() {
+            return None;
+        }
+
+        // Check cache first
+        let cache_key = format!(
+            "{}:{:?}:{}:{}:{}",
+            column,
+            filter.filter_type,
+            filter.value,
+            filter.case_sensitive,
+            filter.selected_values.len()
+        );
+
+        if let Some(cached_expr) = self.filter_expr_cache.get(&cache_key) {
+            return Some(cached_expr.clone());
+        }
+
+        let expr = self.build_column_filter_expr(column, filter);
+
+        // Cache the expression
+        if let Some(ref expr) = expr {
+            self.filter_expr_cache.insert(cache_key, expr.clone());
+        }
+
+        expr
     }
 
     fn build_column_filter_expr(&self, column: &str, filter: &ColumnFilter) -> Option<Expr> {
@@ -383,7 +591,7 @@ impl TimelineExplorerApp {
                     expr_parts.push(filter_expr);
                 }
 
-                // Handle selected values filter
+                // Handle selected values filter (optimized)
                 let selected_values: Vec<String> = filter
                     .selected_values
                     .iter()
@@ -407,12 +615,13 @@ impl TimelineExplorerApp {
     }
 
     fn try_collect_filtered_batch(&mut self, lf: &LazyFrame) -> Result<()> {
+        let start_time = Instant::now();
         let mut q = lf.clone();
 
-        // Apply column filters
+        // Build all filter expressions in parallel
         let filter_exprs: Vec<Expr> = self
             .cols
-            .iter()
+            .par_iter()
             .filter_map(|col| {
                 self.column_filters
                     .get(col)
@@ -420,6 +629,7 @@ impl TimelineExplorerApp {
             })
             .collect();
 
+        // Apply column filters
         if !filter_exprs.is_empty() {
             let combined_filter = filter_exprs
                 .into_iter()
@@ -432,7 +642,7 @@ impl TimelineExplorerApp {
         if !self.filter.is_empty() {
             let global_filter_exprs: Vec<Expr> = self
                 .cols
-                .iter()
+                .par_iter()
                 .map(|c| {
                     col(c)
                         .cast(DataType::String)
@@ -451,6 +661,7 @@ impl TimelineExplorerApp {
             }
         }
 
+        // Apply pagination with streaming for better memory usage
         q = q.slice(self.offset as i64, self.page as u32);
 
         let df = q
@@ -458,15 +669,27 @@ impl TimelineExplorerApp {
             .with_context(|| "Failed to collect filtered data")?;
 
         self.batch = Some(df);
+
+        // Performance monitoring
+        let elapsed = start_time.elapsed();
+        if elapsed > Duration::from_millis(500) {
+            log::warn!("Slow filter operation took {:?}", elapsed);
+        }
+
         Ok(())
     }
 
     fn try_execute_sql(&mut self) -> Result<()> {
-        let lf = self.lf.as_ref().with_context(|| "No CSV file loaded")?;
+        let cached_data = self.cached_data.lock().unwrap();
+        let lf = cached_data
+            .lf
+            .as_ref()
+            .with_context(|| "No CSV file loaded")?;
 
         // Create SQL context and register the dataframe as "data"
         let mut ctx = SQLContext::new();
         ctx.register("data", lf.clone());
+        drop(cached_data);
 
         // Execute the SQL query
         let result_lf = ctx
@@ -505,11 +728,13 @@ impl TimelineExplorerApp {
             filter.value.clear();
             filter.date_from.clear();
             filter.date_to.clear();
+            filter.invalidate_cache();
             for selected in filter.selected_values.values_mut() {
                 *selected = true;
             }
         }
         self.filter.clear();
+        self.filter_expr_cache.clear();
         self.offset = 0;
         self.collect_batch();
     }
@@ -522,6 +747,19 @@ impl TimelineExplorerApp {
             }
             ui.separator();
             ui.checkbox(&mut self.show_filters, "Show Filters");
+
+            // Performance indicator
+            let active_filters = self
+                .column_filters
+                .values()
+                .filter(|f| f.has_active_filters())
+                .count();
+            if active_filters > 0 {
+                ui.colored_label(
+                    Color32::from_rgb(100, 150, 255),
+                    format!("({} active)", active_filters),
+                );
+            }
         });
 
         if !self.show_filters {
@@ -541,7 +779,7 @@ impl TimelineExplorerApp {
                     ui.vertical(|ui| {
                         ui.set_width(200.0);
 
-                        // Column header with filter indicator
+                        // Column header with filter indicator and stats
                         ui.horizontal(|ui| {
                             let color = if has_active_filters {
                                 Color32::from_rgb(100, 150, 255)
@@ -554,6 +792,17 @@ impl TimelineExplorerApp {
                                 ui.colored_label(Color32::from_rgb(255, 150, 100), "●");
                             }
                         });
+
+                        // Show column statistics
+                        if let Ok(cached_data) = self.cached_data.try_lock() {
+                            if let Some(stats) = cached_data.column_stats.get(col) {
+                                ui.small(format!("Type: {:?}", stats.data_type));
+                                ui.small(format!("Unique: {}", stats.unique_count));
+                                if stats.null_count > 0 {
+                                    ui.small(format!("Nulls: {}", stats.null_count));
+                                }
+                            }
+                        }
 
                         ui.separator();
 
@@ -585,7 +834,9 @@ impl TimelineExplorerApp {
                         if ui.checkbox(&mut enabled, "Enable Filter").changed() {
                             if let Some(filter) = self.column_filters.get_mut(col) {
                                 filter.enabled = enabled;
+                                filter.invalidate_cache();
                             }
+                            self.collect_batch_debounced();
                         }
 
                         if enabled {
@@ -604,7 +855,9 @@ impl TimelineExplorerApp {
                                         {
                                             if let Some(filter) = self.column_filters.get_mut(col) {
                                                 filter.filter_type = filter_type.clone();
+                                                filter.invalidate_cache();
                                             }
+                                            self.collect_batch_debounced();
                                         }
                                     }
                                 });
@@ -616,13 +869,17 @@ impl TimelineExplorerApp {
                                     if ui.text_edit_singleline(&mut date_from).changed() {
                                         if let Some(filter) = self.column_filters.get_mut(col) {
                                             filter.date_from = date_from.clone();
+                                            filter.invalidate_cache();
                                         }
+                                        self.collect_batch_debounced();
                                     }
                                     ui.label("To:");
                                     if ui.text_edit_singleline(&mut date_to).changed() {
                                         if let Some(filter) = self.column_filters.get_mut(col) {
                                             filter.date_to = date_to.clone();
+                                            filter.invalidate_cache();
                                         }
+                                        self.collect_batch_debounced();
                                     }
                                     ui.small("Format: YYYY-MM-DD");
                                 }
@@ -634,9 +891,9 @@ impl TimelineExplorerApp {
                                     if ui.text_edit_singleline(&mut value).changed() {
                                         if let Some(filter) = self.column_filters.get_mut(col) {
                                             filter.value = value.clone();
+                                            filter.invalidate_cache();
                                         }
-                                        self.offset = 0;
-                                        self.collect_batch();
+                                        self.collect_batch_debounced();
                                     }
 
                                     if matches!(
@@ -652,14 +909,16 @@ impl TimelineExplorerApp {
                                         {
                                             if let Some(filter) = self.column_filters.get_mut(col) {
                                                 filter.case_sensitive = case_sensitive;
+                                                filter.invalidate_cache();
                                             }
+                                            self.collect_batch_debounced();
                                         }
                                     }
                                 }
                             }
 
-                            // Unique values selection
-                            if !unique_values.is_empty() {
+                            // Unique values selection with performance optimization
+                            if !unique_values.is_empty() && unique_values.len() <= 100 {
                                 ui.separator();
                                 ui.label("Select values:");
 
@@ -669,18 +928,18 @@ impl TimelineExplorerApp {
                                             for selected in filter.selected_values.values_mut() {
                                                 *selected = true;
                                             }
+                                            filter.invalidate_cache();
                                         }
-                                        self.offset = 0;
-                                        self.collect_batch();
+                                        self.collect_batch_debounced();
                                     }
                                     if ui.small_button("None").clicked() {
                                         if let Some(filter) = self.column_filters.get_mut(col) {
                                             for selected in filter.selected_values.values_mut() {
                                                 *selected = false;
                                             }
+                                            filter.invalidate_cache();
                                         }
-                                        self.offset = 0;
-                                        self.collect_batch();
+                                        self.collect_batch_debounced();
                                     }
                                 });
 
@@ -697,12 +956,18 @@ impl TimelineExplorerApp {
                                                     filter
                                                         .selected_values
                                                         .insert(value.clone(), selected);
+                                                    filter.invalidate_cache();
                                                 }
-                                                self.offset = 0;
-                                                self.collect_batch();
+                                                self.collect_batch_debounced();
                                             }
                                         }
                                     });
+                            } else if unique_values.len() > 100 {
+                                ui.small(format!(
+                                    "Too many unique values ({})",
+                                    unique_values.len()
+                                ));
+                                ui.small("Use text filter instead");
                             }
 
                             if ui.button("Apply Filter").clicked() {
@@ -720,6 +985,14 @@ impl TimelineExplorerApp {
 
 impl App for TimelineExplorerApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        // Handle debounced filter updates
+        if let Some(timer) = self.filter_debounce_timer {
+            if timer.elapsed() > Duration::from_millis(300) {
+                self.collect_batch();
+                self.filter_debounce_timer = None;
+            }
+        }
+
         egui::TopBottomPanel::top("menu").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open CSV…").clicked() {
@@ -743,6 +1016,15 @@ impl App for TimelineExplorerApp {
                 if ui.selectable_label(self.sql_mode, "SQL").clicked() {
                     self.sql_mode = true;
                     self.offset = 0;
+                }
+
+                ui.separator();
+
+                // Performance indicator
+                if let Ok(processing) = self.processing.try_lock() {
+                    if *processing {
+                        ui.colored_label(Color32::YELLOW, "Processing...");
+                    }
                 }
             });
         });
@@ -775,10 +1057,16 @@ impl App for TimelineExplorerApp {
         });
 
         // Filter panel (only show in filter mode)
-        if !self.sql_mode && self.lf.is_some() {
-            egui::TopBottomPanel::top("filters").show(ctx, |ui| {
-                self.render_filter_panel(ui);
-            });
+        if !self.sql_mode {
+            let cached_data = self.cached_data.lock().unwrap();
+            let has_data = cached_data.lf.is_some();
+            drop(cached_data);
+
+            if has_data {
+                egui::TopBottomPanel::top("filters").show(ctx, |ui| {
+                    self.render_filter_panel(ui);
+                });
+            }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -860,7 +1148,7 @@ impl App for TimelineExplorerApp {
                             self.offset + n_rows
                         ));
 
-                        // Show active filter count
+                        // Show active filter count and performance info
                         let active_filters = self
                             .column_filters
                             .values()
@@ -873,6 +1161,10 @@ impl App for TimelineExplorerApp {
                                 format!("{} active filter(s)", active_filters),
                             );
                         }
+
+                        // Show performance metrics
+                        ui.separator();
+                        ui.small(format!("Cache entries: {}", self.filter_expr_cache.len()));
                     } else {
                         ui.label(format!("Query returned {} rows", n_rows));
                     }

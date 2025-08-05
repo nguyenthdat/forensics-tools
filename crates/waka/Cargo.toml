@@ -1,0 +1,10 @@
+[package]
+name = "waka"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+readme.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+[dependencies]
