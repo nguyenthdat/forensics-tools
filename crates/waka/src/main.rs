@@ -8,6 +8,8 @@ mod app;
 mod config;
 mod util;
 
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 const APP_TITLE: &str = "Waka Forensics Suite";
 
 fn main() -> eframe::Result<()> {

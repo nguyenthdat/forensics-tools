@@ -12,6 +12,7 @@ license = "MIT"
 
 [workspace.dependencies]
 mtf = { version = "0.6.1", default-features = false, path = "crates/mft" }
+qsv = { version = "*", default-features = false, path = "crates/qsv" }
 
 tokio = { version = "1", features = ["full"] }
 anyhow = { version = "1.0" }
@@ -99,6 +100,8 @@ rfd = { version = "0.15.4", features = [
     "file-handle-inner",
 ] }
 
+polars-ops = { version = "0.50" }
+polars-utils = { version = "0.50" }
 polars = { version = "0.50.0", features = ["full"] }
 polars-sql = { version = "0.50.0", features = [
     "csv",

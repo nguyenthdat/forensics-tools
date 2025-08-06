@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use csv::ReaderBuilder;
 use rayon::prelude::*;
-use tantivy::{DateTime as TantivyDateTime, Index, TantivyDocument, schema::FieldType};
+use tantivy::{schema::FieldType, DateTime as TantivyDateTime, Index, TantivyDocument};
 
 use crate::index::schema::infer_schema_from_csv;
 
