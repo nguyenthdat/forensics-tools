@@ -9,6 +9,7 @@
   "rust-analyzer.testExplorer": true,
   "rust-analyzer.showSyntaxTree": true,
   "rust-analyzer.check.workspace": false,
+  "rust-analyzer.showUnlinkedFileNotification": false,
   "rust-analyzer.cachePriming.numThreads": "physical",
   "rust-analyzer.cargo.features": "all",
   "[toml]": {
