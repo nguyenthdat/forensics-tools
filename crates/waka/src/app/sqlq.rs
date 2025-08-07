@@ -21,7 +21,6 @@ pub struct SqlEditor {
     text_edit_rect: Option<egui::Rect>,
     syntax_error: Option<String>,
     limit: i32,
-    show_history: bool,
     editor_height_ratio: f32,
     // New fields for the modern interface
     search_column: String,
@@ -51,8 +50,7 @@ impl SqlEditor {
             text_edit_rect: None,
             syntax_error: None,
             limit: 1000,
-            show_history: false,
-            editor_height_ratio: 0.35, // Smaller editor like in image
+            editor_height_ratio: 0.35,
             search_column: "altnameid".to_string(),
             search_query: String::new(),
             rows_per_page: 10,
@@ -162,7 +160,7 @@ impl SqlEditor {
     }
 
 
-    fn show_sql_editor_section(&mut self, ui: &mut egui::Ui) {
+ fn show_sql_editor_section(&mut self, ui: &mut egui::Ui) {
         let available_height = ui.available_height();
         let editor_height = available_height * self.editor_height_ratio;
         
@@ -172,48 +170,9 @@ impl SqlEditor {
             .corner_radius(CornerRadius::same(4))
             .inner_margin(Margin::symmetric(16, 8))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // Calculate line number width dynamically based on actual line count
-                    let line_count = self.get_line_count();
-                    let max_line_number = line_count.max(20);
-                    let digits = if max_line_number < 10 {
-                        1
-                    } else if max_line_number < 100 {
-                        2
-                    } else {
-                        3
-                    };
-                    let char_width = 8.0;
-                    let padding = 16.0;
-                    let line_number_width = (digits as f32 * char_width) + padding;
-
-                    // Line numbers with calculated width
-                    ui.allocate_ui_with_layout(
-                        egui::Vec2::new(line_number_width, editor_height - 32.0),
-                        egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| {
-                            self.show_line_numbers(ui, editor_height - 32.0);
-                        },
-                    );
-
-                    // Editor with syntax highlighting
-                    self.show_highlighted_editor(ui, editor_height - 32.0);
-                });
+                // Editor with syntax highlighting (no line numbers)
+                self.show_highlighted_editor(ui, editor_height - 16.0);
             });
-    }
-
-    fn get_line_count(&self) -> usize {
-        if self.query.is_empty() {
-            1
-        } else {
-            // Count newlines and add 1, but handle trailing newlines properly
-            let newline_count = self.query.matches('\n').count();
-            if self.query.ends_with('\n') {
-                newline_count + 2 // Extra line for cursor position after last newline
-            } else {
-                newline_count + 1
-            }
-        }
     }
 
     fn show_query_controls(&mut self, ui: &mut egui::Ui) {
@@ -459,346 +418,7 @@ impl SqlEditor {
         });
     }
 
-
-    fn show_toolbar(&mut self, ui: &mut egui::Ui) {
-        Frame::new()
-            .fill(egui::Color32::from_rgb(45, 45, 45))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-
-                    // Query tab
-                    Frame::new()
-                        .fill(egui::Color32::from_rgb(60, 60, 60))
-                        .corner_radius(CornerRadius::same(4))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.add_space(8.0);
-                                ui.label("📊");
-                                ui.label(
-                                    egui::RichText::new("Query 5")
-                                        .color(egui::Color32::WHITE)
-                                        .size(12.0),
-                                );
-                                ui.add_space(4.0);
-                            });
-                        });
-
-                    ui.add_space(8.0);
-
-                    // Run button (highlighted green)
-                    let run_button = egui::Button::new(
-                        egui::RichText::new("▶ Run")
-                            .color(egui::Color32::WHITE)
-                            .size(12.0),
-                    )
-                    .fill(egui::Color32::from_rgb(76, 175, 80))
-                    .corner_radius(CornerRadius::same(4));
-
-                    if ui.add(run_button).clicked() {
-                        self.execute_query();
-                    }
-
-                    ui.add_space(8.0);
-
-                    // Limit checkbox and input
-                    ui.checkbox(&mut true, "");
-                    ui.label(
-                        egui::RichText::new("Limit")
-                            .color(egui::Color32::WHITE)
-                            .size(11.0),
-                    );
-
-                    ui.add(
-                        egui::DragValue::new(&mut self.limit)
-                            .range(1..=10000)
-                            .speed(1),
-                    );
-
-                    ui.add_space(8.0);
-
-                    // Format button
-                    let format_button = egui::Button::new(
-                        egui::RichText::new("Format")
-                            .color(egui::Color32::WHITE)
-                            .size(11.0),
-                    )
-                    .fill(egui::Color32::from_rgb(60, 60, 60))
-                    .corner_radius(CornerRadius::same(4));
-
-                    if ui.add(format_button).clicked() {
-                        self.format_query();
-                    }
-
-                    ui.add_space(8.0);
-
-                    // View history button
-                    let history_button = egui::Button::new(
-                        egui::RichText::new("📋 View history")
-                            .color(egui::Color32::WHITE)
-                            .size(11.0),
-                    )
-                    .fill(egui::Color32::from_rgb(60, 60, 60))
-                    .corner_radius(CornerRadius::same(4));
-
-                    if ui.add(history_button).clicked() {
-                        self.show_history = !self.show_history;
-                    }
-
-                    // Right side - settings
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(8.0);
-
-                        let settings_button = egui::Button::new("⚙")
-                            .fill(egui::Color32::from_rgb(60, 60, 60))
-                            .corner_radius(CornerRadius::same(4));
-
-                        ui.add(settings_button);
-                    });
-                });
-            });
-    }
-
-    fn show_main_editor_area(&mut self, ui: &mut egui::Ui, height: f32) {
-        Frame::new()
-            .fill(egui::Color32::from_rgb(40, 40, 40))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    // Calculate line number width dynamically
-                    let line_count = self.query.lines().count().max(1);
-                    let max_line_number = line_count.max(20);
-                    let digits = if max_line_number < 10 {
-                        1
-                    } else if max_line_number < 100 {
-                        2
-                    } else {
-                        3
-                    };
-                    let char_width = 8.0;
-                    let padding = 16.0;
-                    let line_number_width = (digits as f32 * char_width) + padding;
-
-                    // Line numbers with calculated width
-                    ui.allocate_ui_with_layout(
-                        egui::Vec2::new(line_number_width, height),
-                        egui::Layout::top_down(egui::Align::LEFT),
-                        |ui| {
-                            self.show_line_numbers(ui, height);
-                        },
-                    );
-
-                    // Editor with remaining width
-                    self.show_highlighted_editor(ui, height);
-                });
-            });
-    }
-
-    fn show_resize_separator(&mut self, ui: &mut egui::Ui) {
-        let separator_height = 16.0; // Make it taller for easier grabbing
-
-        // Create an interactive area that spans the full width
-        let (rect, response) = ui.allocate_exact_size(
-            egui::Vec2::new(ui.available_width(), separator_height),
-            egui::Sense::hover().union(egui::Sense::drag()),
-        );
-
-        // Visual feedback based on interaction state
-        let (bg_color, grip_color) = if response.dragged() {
-            // Active drag state
-            (
-                egui::Color32::from_rgb(70, 120, 180), // Blue tint when dragging
-                egui::Color32::from_rgb(200, 200, 200),
-            )
-        } else if response.hovered() {
-            // Hover state
-            (
-                egui::Color32::from_rgb(60, 60, 60), // Lighter on hover
-                egui::Color32::from_rgb(180, 180, 180),
-            )
-        } else {
-            // Default state
-            (
-                egui::Color32::from_rgb(45, 45, 45),
-                egui::Color32::from_rgb(120, 120, 120),
-            )
-        };
-
-        // Draw background
-        ui.painter().rect_filled(rect, 2.0, bg_color);
-
-        // Draw border
-        ui.painter().rect_stroke(
-            rect,
-            2.0,
-            egui::Stroke::new(0.5, egui::Color32::from_rgb(80, 80, 80)),
-            egui::StrokeKind::Inside,
-        );
-
-        // Draw grip pattern in the center
-        let center = rect.center();
-        let grip_width = 40.0;
-        let grip_height = 2.0;
-        let line_spacing = 2.0;
-
-        // Draw three horizontal lines as grip indicator
-        for i in -1..=1 {
-            let y_offset = i as f32 * (grip_height + line_spacing);
-            let line_rect = egui::Rect::from_center_size(
-                egui::Pos2::new(center.x, center.y + y_offset),
-                egui::Vec2::new(grip_width, grip_height),
-            );
-            ui.painter().rect_filled(line_rect, 1.0, grip_color);
-        }
-
-        // Change cursor when hovering or dragging
-        if response.hovered() || response.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-        }
-
-        // Handle drag to resize
-        if response.dragged() {
-            let delta = response.drag_delta().y;
-
-            // Get the total available height from the main show function
-            // We need to be more careful about how we calculate this
-            let available_height = ui.available_height()
-                + (ui.available_rect_before_wrap().height() - ui.available_height());
-
-            if available_height > 200.0 {
-                // Minimum total height check
-                // Convert pixel delta to ratio change
-                let height_change = delta / available_height;
-                let new_ratio = self.editor_height_ratio + height_change;
-
-                // Clamp to reasonable bounds
-                let min_editor_ratio = 0.2; // At least 20% for editor
-                let max_editor_ratio = 0.8; // At most 80% for editor
-
-                self.editor_height_ratio = new_ratio.clamp(min_editor_ratio, max_editor_ratio);
-            }
-        }
-
-        // Show tooltip on hover
-        if response.hovered() {
-            egui::Tooltip::for_enabled(&response.on_hover_ui_at_pointer(|ui| {
-                ui.label("Drag to resize editor and results panels");
-            }));
-        }
-    }
-
-    fn show_results_area(&mut self, ui: &mut egui::Ui) {
-        let remaining_height = ui.available_height();
-
-        Frame::new()
-            .fill(egui::Color32::from_rgb(35, 35, 35))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)))
-            .show(ui, |ui| {
-                ui.vertical(|ui| {
-                    // Results header
-                    Frame::new()
-                        .fill(egui::Color32::from_rgb(50, 50, 50))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new("📊 Results")
-                                        .color(egui::Color32::WHITE)
-                                        .size(12.0)
-                                        .strong(),
-                                );
-
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        ui.add_space(8.0);
-
-                                        // Close button
-                                        if ui.small_button("✕").clicked() {
-                                            self.show_result = false;
-                                        }
-                                    },
-                                );
-                            });
-                        });
-
-                    // Results content
-                    egui::ScrollArea::vertical()
-                        .max_height(remaining_height - 40.0) // Leave space for header
-                        .show(ui, |ui| {
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new(&self.result)
-                                        .color(egui::Color32::WHITE)
-                                        .size(11.0)
-                                        .family(egui::FontFamily::Monospace),
-                                );
-                            });
-                            ui.add_space(8.0);
-                        });
-                });
-            });
-    }
-
-   fn show_line_numbers(&self, ui: &mut egui::Ui, height: f32) {
-        let line_count = self.get_line_count();
-
-        // Calculate how many lines can fit in the given height
-        let line_height = 17.0; // Match the line height in paint_syntax_highlighted_text
-        let top_padding = 8.0;
-        let available_height_for_lines = height - top_padding - 10.0;
-        let max_visible_lines = (available_height_for_lines / line_height).floor() as usize;
-        let lines_to_show = line_count.min(max_visible_lines).max(1);
-
-        // Calculate the width needed based on the maximum line number
-        let max_line_number = line_count.max(20);
-        let digits = if max_line_number < 10 {
-            1
-        } else if max_line_number < 100 {
-            2
-        } else {
-            3
-        };
-        let char_width = 8.0;
-        let padding = 16.0;
-        let calculated_width = (digits as f32 * char_width) + padding;
-
-        Frame::new()
-            .fill(egui::Color32::from_rgb(50, 50, 50))
-            .show(ui, |ui| {
-                ui.allocate_ui_with_layout(
-                    egui::Vec2::new(calculated_width, height),
-                    egui::Layout::top_down(egui::Align::RIGHT),
-                    |ui| {
-                        ui.add_space(top_padding);
-
-                        // Show line numbers that fit in the available space
-                        for line_num in 1..=lines_to_show {
-                            ui.label(
-                                egui::RichText::new(format!("{:width$}", line_num, width = digits))
-                                    .color(egui::Color32::from_rgb(130, 130, 130))
-                                    .size(12.0)
-                                    .family(egui::FontFamily::Monospace),
-                            );
-                        }
-
-                        // If there are more lines than can be displayed, show an indicator
-                        if line_count > max_visible_lines {
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new("⋮")
-                                    .color(egui::Color32::from_rgb(100, 100, 100))
-                                    .size(14.0),
-                            );
-                        }
-                    },
-                );
-            });
-    }
-
- fn show_highlighted_editor(&mut self, ui: &mut egui::Ui, height: f32) {
+    fn show_highlighted_editor(&mut self, ui: &mut egui::Ui, height: f32) {
         Frame::new()
             .fill(egui::Color32::from_rgb(30, 30, 30))
             .show(ui, |ui| {
@@ -1083,20 +703,6 @@ impl SqlEditor {
         }
     }
 
-    fn format_query(&mut self) {
-        // Simple SQL formatting
-        self.query = self
-            .query
-            .replace(" SELECT ", "\nSELECT ")
-            .replace(" FROM ", "\nFROM ")
-            .replace(" WHERE ", "\nWHERE ")
-            .replace(" AND ", "\n  AND ")
-            .replace(" OR ", "\n  OR ")
-            .replace(" ORDER BY ", "\nORDER BY ")
-            .replace(" GROUP BY ", "\nGROUP BY ")
-            .replace(" HAVING ", "\nHAVING ");
-    }
-
     fn validate_syntax(&mut self) {
         if self.query.trim().is_empty() {
             self.syntax_error = None;
@@ -1117,18 +723,17 @@ impl SqlEditor {
     }
 
     fn update_cursor_position(&mut self) {
-        // Count lines more accurately
-        let line_count = self.get_line_count();
-        self.cursor_row = line_count;
+        // More accurate cursor position tracking
+        let lines: Vec<&str> = self.query.split('\n').collect();
+        
+        // Current row is the number of lines
+        self.cursor_row = lines.len();
 
-        // Find the current column position
-        if let Some(last_newline_pos) = self.query.rfind('\n') {
-            // If there's a newline, count from after the last newline
-            let after_last_newline = &self.query[last_newline_pos + 1..];
-            self.cursor_col = after_last_newline.len() + 1;
+        // Current column is the length of the last line + 1
+        if let Some(last_line) = lines.last() {
+            self.cursor_col = last_line.len() + 1;
         } else {
-            // No newlines, count from the beginning
-            self.cursor_col = self.query.len() + 1;
+            self.cursor_col = 1;
         }
     }
 
