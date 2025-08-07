@@ -153,9 +153,6 @@ csvlens = { git = "https://github.com/jqnatividad/csvlens", branch = "133-natura
 # use our patched fork of csvs_convert to bump dependencies until our PR is merged
 csvs_convert = { git = "https://github.com/jqnatividad/csvs_convert", branch = "bump-rust_xlsxwriter-to-0.88" }
 
-# use unreleased upstream fixes for dns-lookup
-dns-lookup = { git = "https://github.com/keeperofdakeys/dns-lookup", rev = "7745e71" }
-
 # use our patched fork of grex to bump dependencies and Unicode tables from 15 to 16 until our PR is merged
 grex = { git = "https://github.com/jqnatividad/grex", branch = "bumped-dependencies-202502" }
 
