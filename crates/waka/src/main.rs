@@ -8,6 +8,9 @@ mod app;
 mod config;
 mod util;
 
+// #[global_allocator]
+// static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const APP_TITLE: &str = "Waka Forensics Suite";
