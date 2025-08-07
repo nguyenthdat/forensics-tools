@@ -161,6 +161,7 @@ impl SqlEditor {
             });
     }
 
+
     fn show_sql_editor_section(&mut self, ui: &mut egui::Ui) {
         let available_height = ui.available_height();
         let editor_height = available_height * self.editor_height_ratio;
@@ -172,8 +173,8 @@ impl SqlEditor {
             .inner_margin(Margin::symmetric(16, 8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    // Calculate line number width dynamically
-                    let line_count = self.query.lines().count().max(1);
+                    // Calculate line number width dynamically based on actual line count
+                    let line_count = self.get_line_count();
                     let max_line_number = line_count.max(20);
                     let digits = if max_line_number < 10 {
                         1
@@ -201,6 +202,19 @@ impl SqlEditor {
             });
     }
 
+    fn get_line_count(&self) -> usize {
+        if self.query.is_empty() {
+            1
+        } else {
+            // Count newlines and add 1, but handle trailing newlines properly
+            let newline_count = self.query.matches('\n').count();
+            if self.query.ends_with('\n') {
+                newline_count + 2 // Extra line for cursor position after last newline
+            } else {
+                newline_count + 1
+            }
+        }
+    }
 
     fn show_query_controls(&mut self, ui: &mut egui::Ui) {
         Frame::new()
@@ -728,18 +742,18 @@ impl SqlEditor {
             });
     }
 
-    fn show_line_numbers(&self, ui: &mut egui::Ui, height: f32) {
-        let line_count = self.query.lines().count().max(1);
+   fn show_line_numbers(&self, ui: &mut egui::Ui, height: f32) {
+        let line_count = self.get_line_count();
 
         // Calculate how many lines can fit in the given height
-        let line_height = 18.0; // Should match the line height in paint_syntax_highlighted_text
+        let line_height = 17.0; // Match the line height in paint_syntax_highlighted_text
         let top_padding = 8.0;
-        let available_height_for_lines = height - top_padding - 10.0; // Leave some bottom padding
+        let available_height_for_lines = height - top_padding - 10.0;
         let max_visible_lines = (available_height_for_lines / line_height).floor() as usize;
         let lines_to_show = line_count.min(max_visible_lines).max(1);
 
         // Calculate the width needed based on the maximum line number
-        let max_line_number = line_count.max(20); // Show at least 20 line numbers for consistency
+        let max_line_number = line_count.max(20);
         let digits = if max_line_number < 10 {
             1
         } else if max_line_number < 100 {
@@ -747,8 +761,8 @@ impl SqlEditor {
         } else {
             3
         };
-        let char_width = 8.0; // Approximate width of a monospace character
-        let padding = 16.0; // Left and right padding
+        let char_width = 8.0;
+        let padding = 16.0;
         let calculated_width = (digits as f32 * char_width) + padding;
 
         Frame::new()
@@ -762,15 +776,9 @@ impl SqlEditor {
 
                         // Show line numbers that fit in the available space
                         for line_num in 1..=lines_to_show {
-                            let line_color = if line_num <= line_count {
-                                egui::Color32::from_rgb(130, 130, 130) // Normal line numbers
-                            } else {
-                                egui::Color32::from_rgb(80, 80, 80) // Dimmed for empty lines
-                            };
-
                             ui.label(
                                 egui::RichText::new(format!("{:width$}", line_num, width = digits))
-                                    .color(line_color)
+                                    .color(egui::Color32::from_rgb(130, 130, 130))
                                     .size(12.0)
                                     .family(egui::FontFamily::Monospace),
                             );
@@ -878,16 +886,18 @@ impl SqlEditor {
         }
 
         let font_id = egui::FontId::monospace(13.0);
-        let line_height = 17.0;
+        let line_height = 17.0; // Match the line height in show_line_numbers
         let char_width = 7.8;
 
-        let lines: Vec<&str> = self.query.lines().collect();
+        // Split by lines, but include empty lines
+        let lines: Vec<&str> = self.query.split('\n').collect();
 
         for (line_idx, line) in lines.iter().enumerate() {
             let y_pos = rect.top() + 8.0 + (line_idx as f32 * line_height);
             
-            if line.trim().is_empty() {
-                continue; // Skip empty lines
+            // For empty lines, just skip painting (but still count the line)
+            if line.is_empty() {
+                continue;
             }
 
             // Parse the line for syntax highlighting
@@ -1107,13 +1117,18 @@ impl SqlEditor {
     }
 
     fn update_cursor_position(&mut self) {
-        let lines: Vec<&str> = self.query.lines().collect();
-        self.cursor_row = lines.len().max(1);
+        // Count lines more accurately
+        let line_count = self.get_line_count();
+        self.cursor_row = line_count;
 
-        if let Some(last_line) = lines.last() {
-            self.cursor_col = last_line.len() + 1;
+        // Find the current column position
+        if let Some(last_newline_pos) = self.query.rfind('\n') {
+            // If there's a newline, count from after the last newline
+            let after_last_newline = &self.query[last_newline_pos + 1..];
+            self.cursor_col = after_last_newline.len() + 1;
         } else {
-            self.cursor_col = 1;
+            // No newlines, count from the beginning
+            self.cursor_col = self.query.len() + 1;
         }
     }
 
