@@ -519,9 +519,7 @@ impl SqlEditor {
                     // Check if mouse is hovering over error area
                     if hover_pos.x >= error_x_start && hover_pos.x <= error_x_end &&
                        hover_pos.y >= error_y && hover_pos.y <= error_y + line_height {
-                        
-                        // Show error tooltip
-                        egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(),egui::Id::new("sql_error_tooltip"), |ui| {
+                        response.clone().on_hover_ui_at_pointer(|ui| {
                             ui.set_max_width(300.0);
                             Frame::new()
                                 .fill(egui::Color32::from_rgb(80, 40, 40))
