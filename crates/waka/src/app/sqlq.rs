@@ -1,9 +1,9 @@
 use eframe::{egui, egui::Frame};
-use epaint::{CornerRadius, Margin};
+use epaint::{CornerRadius, Margin, Stroke, StrokeKind};
+use polars_sql::keywords::{all_functions, all_keywords};
 use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use std::collections::HashSet;
 
 pub struct SqlEditor {
     query: String,
@@ -14,14 +14,16 @@ pub struct SqlEditor {
     selected_suggestion: usize,
     cursor_row: usize,
     cursor_col: usize,
-    sql_keywords: HashSet<&'static str>,
-    sql_functions: HashSet<&'static str>,
+    sql_keywords: Vec<&'static str>,
+    sql_functions: Vec<&'static str>,
     current_word: String,
     text_edit_rect: Option<egui::Rect>,
     syntax_error: Option<String>,
     limit: i32,
     show_history: bool,
     editor_height_ratio: f32,
+    separator_hover: bool,
+    separator_drag: bool,
 }
 
 impl SqlEditor {
@@ -35,40 +37,49 @@ impl SqlEditor {
             selected_suggestion: 0,
             cursor_row: 1,
             cursor_col: 1,
-            sql_keywords: Self::get_sql_keywords(),
-            sql_functions: Self::get_sql_functions(),
+            sql_keywords: all_keywords(),
+            sql_functions: all_functions(),
             current_word: String::new(),
             text_edit_rect: None,
             syntax_error: None,
             limit: 100,
             show_history: false,
             editor_height_ratio: 0.6,
+            separator_hover: false,
+            separator_drag: false,
         }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        // Main container with dark background
+        // Main container with improved dark theme
         Frame::new()
-            .fill(egui::Color32::from_rgb(30, 30, 30))
+            .fill(egui::Color32::from_rgb(24, 24, 27))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(45, 45, 48)))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(Margin::same(4))
             .show(ui, |ui| {
-                ui.vertical(|ui| {
-                    // Top toolbar
+                ui.vertical_centered_justified(|ui| {
+                    // Top toolbar with better styling
                     self.show_toolbar(ui);
+
+                    ui.add_space(2.0);
 
                     // Calculate available space for resizable content
                     let available_rect = ui.available_rect_before_wrap();
-                    let total_height = available_rect.height();
+                    let total_height = available_rect.height() - 60.0; // Reserve space for toolbar and separator
 
                     // Editor area with resizable height
                     let editor_height = total_height * self.editor_height_ratio;
                     self.show_main_editor_area(ui, editor_height);
 
-                    // Horizontal separator/splitter
+                    // Improved horizontal separator/splitter
                     self.show_resize_separator(ui);
 
                     // Results area (remaining space)
                     if self.show_result {
-                        self.show_results_area(ui);
+                        let remaining_height =
+                            total_height * (1.0 - self.editor_height_ratio) - 20.0;
+                        self.show_results_area(ui, remaining_height);
                     }
 
                     // Show syntax error if any
@@ -84,98 +95,114 @@ impl SqlEditor {
 
     fn show_toolbar(&mut self, ui: &mut egui::Ui) {
         Frame::new()
-            .fill(egui::Color32::from_rgb(45, 45, 45))
+            .fill(egui::Color32::from_rgb(39, 39, 42))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 63)))
+            .corner_radius(CornerRadius::same(6))
+            .inner_margin(Margin::same(4))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
 
-                    // Query tab
+                    // Query tab with improved styling
                     Frame::new()
-                        .fill(egui::Color32::from_rgb(60, 60, 60))
-                        .corner_radius(CornerRadius::same(4))
+                        .fill(egui::Color32::from_rgb(55, 55, 58))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(75, 75, 78)))
+                        .corner_radius(CornerRadius::same(6))
+                        .inner_margin(Margin::same(6))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.add_space(8.0);
-                                ui.label("📊");
-                                ui.label(
-                                    egui::RichText::new("Query 5")
-                                        .color(egui::Color32::WHITE)
-                                        .size(12.0),
-                                );
+                                ui.label(egui::RichText::new("📊").size(14.0));
                                 ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new("Query Editor")
+                                        .color(egui::Color32::from_rgb(229, 229, 232))
+                                        .size(13.0)
+                                        .strong(),
+                                );
                             });
                         });
 
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
 
-                    // Run button (highlighted green)
+                    // Enhanced Run button with gradient effect
                     let run_button = egui::Button::new(
-                        egui::RichText::new("▶ Run")
+                        egui::RichText::new("▶ Execute")
                             .color(egui::Color32::WHITE)
-                            .size(12.0),
+                            .size(13.0)
+                            .strong(),
                     )
-                    .fill(egui::Color32::from_rgb(76, 175, 80))
-                    .corner_radius(CornerRadius::same(4));
+                    .fill(egui::Color32::from_rgb(34, 197, 94))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(22, 163, 74)))
+                    .corner_radius(CornerRadius::same(6));
 
-                    if ui.add(run_button).clicked() {
+                    if ui.add_sized([80.0, 32.0], run_button).clicked() {
                         self.execute_query();
                     }
 
-                    ui.add_space(8.0);
+                    ui.add_space(16.0);
 
-                    // Limit checkbox and input
-                    ui.checkbox(&mut true, "");
-                    ui.label(
-                        egui::RichText::new("Limit")
-                            .color(egui::Color32::WHITE)
-                            .size(11.0),
-                    );
+                    // Improved limit controls
+                    ui.vertical_centered(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut true, "");
+                            ui.label(
+                                egui::RichText::new("Row Limit")
+                                    .color(egui::Color32::from_rgb(161, 161, 170))
+                                    .size(12.0),
+                            );
+                        });
+                    });
 
-                    ui.add(
+                    ui.add_sized(
+                        [60.0, 24.0],
                         egui::DragValue::new(&mut self.limit)
                             .range(1..=10000)
-                            .speed(1),
+                            .speed(10),
                     );
 
-                    ui.add_space(8.0);
+                    ui.add_space(16.0);
 
-                    // Format button
+                    // Enhanced Format button
                     let format_button = egui::Button::new(
-                        egui::RichText::new("Format")
-                            .color(egui::Color32::WHITE)
-                            .size(11.0),
+                        egui::RichText::new("🎨 Format")
+                            .color(egui::Color32::from_rgb(229, 229, 232))
+                            .size(12.0),
                     )
-                    .fill(egui::Color32::from_rgb(60, 60, 60))
-                    .corner_radius(CornerRadius::same(4));
+                    .fill(egui::Color32::from_rgb(55, 55, 58))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(75, 75, 78)))
+                    .corner_radius(CornerRadius::same(6));
 
-                    if ui.add(format_button).clicked() {
+                    if ui.add_sized([80.0, 28.0], format_button).clicked() {
                         self.format_query();
                     }
 
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
 
-                    // View history button
+                    // Enhanced history button
                     let history_button = egui::Button::new(
-                        egui::RichText::new("📋 View history")
-                            .color(egui::Color32::WHITE)
-                            .size(11.0),
+                        egui::RichText::new("📋 History")
+                            .color(egui::Color32::from_rgb(229, 229, 232))
+                            .size(12.0),
                     )
-                    .fill(egui::Color32::from_rgb(60, 60, 60))
-                    .corner_radius(CornerRadius::same(4));
+                    .fill(egui::Color32::from_rgb(55, 55, 58))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(75, 75, 78)))
+                    .corner_radius(CornerRadius::same(6));
 
-                    if ui.add(history_button).clicked() {
+                    if ui.add_sized([80.0, 28.0], history_button).clicked() {
                         self.show_history = !self.show_history;
                     }
 
-                    // Right side - settings
+                    // Right side - enhanced settings
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(8.0);
+                        ui.add_space(12.0);
 
-                        let settings_button = egui::Button::new("⚙")
-                            .fill(egui::Color32::from_rgb(60, 60, 60))
-                            .corner_radius(CornerRadius::same(4));
+                        let settings_button =
+                            egui::Button::new(egui::RichText::new("⚙️").size(16.0))
+                                .fill(egui::Color32::from_rgb(55, 55, 58))
+                                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(75, 75, 78)))
+                                .corner_radius(CornerRadius::same(6));
 
-                        ui.add(settings_button);
+                        ui.add_sized([32.0, 32.0], settings_button);
                     });
                 });
             });
@@ -183,92 +210,167 @@ impl SqlEditor {
 
     fn show_main_editor_area(&mut self, ui: &mut egui::Ui, height: f32) {
         Frame::new()
-            .fill(egui::Color32::from_rgb(40, 40, 40))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)))
+            .fill(egui::Color32::from_rgb(30, 30, 33))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 63)))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(Margin::same(2))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    // Line numbers
+                    // Enhanced line numbers with better contrast
                     self.show_line_numbers(ui, height);
 
-                    // Editor with syntax highlighting overlay
+                    // Vertical separator between line numbers and editor
+                    ui.separator();
+
+                    // Editor with improved syntax highlighting
                     self.show_highlighted_editor(ui, height);
                 });
             });
     }
 
     fn show_resize_separator(&mut self, ui: &mut egui::Ui) {
-        // Create a draggable horizontal separator
-        Frame::new()
-            .fill(egui::Color32::from_rgb(60, 60, 60))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
+        // Create an improved draggable horizontal separator
+        let separator_height = 16.0;
+        let available_width = ui.available_width();
 
-                    // Resize handle with visual indicator
-                    ui.label(
-                        egui::RichText::new("⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯")
-                            .color(egui::Color32::from_rgb(120, 120, 120))
-                            .size(8.0),
-                    );
-                });
+        let (rect, response) = ui.allocate_exact_size(
+            egui::Vec2::new(available_width, separator_height),
+            egui::Sense::hover() | egui::Sense::drag(),
+        );
 
-                // Make the entire separator draggable
-                let separator_rect = ui.min_rect();
-                let response = ui.interact(
-                    separator_rect,
-                    egui::Id::new("editor_resize_separator"),
-                    egui::Sense::drag(),
-                );
+        // Update hover and drag states
+        self.separator_hover = response.hovered();
+        self.separator_drag = response.dragged();
 
-                // Change cursor when hovering over separator
-                if response.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-                }
+        // Choose colors based on state
+        let (bg_color, accent_color, handle_color) = if self.separator_drag {
+            (
+                egui::Color32::from_rgb(70, 130, 180), // Bright blue when dragging
+                egui::Color32::from_rgb(100, 150, 200),
+                egui::Color32::WHITE,
+            )
+        } else if self.separator_hover {
+            (
+                egui::Color32::from_rgb(55, 55, 58), // Lighter when hovering
+                egui::Color32::from_rgb(75, 75, 78),
+                egui::Color32::from_rgb(200, 200, 200),
+            )
+        } else {
+            (
+                egui::Color32::from_rgb(45, 45, 48), // Default dark
+                egui::Color32::from_rgb(60, 60, 63),
+                egui::Color32::from_rgb(120, 120, 123),
+            )
+        };
 
-                // Handle drag to resize
-                if response.dragged() {
-                    let delta = response.drag_delta().y;
-                    let total_height = ui.available_rect_before_wrap().height();
+        // Draw the separator background
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), bg_color);
 
-                    if total_height > 0.0 {
-                        let height_change = delta / total_height;
-                        self.editor_height_ratio += height_change;
+        // Draw border
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(4),
+            Stroke::new(1.0, accent_color),
+            StrokeKind::Inside,
+        );
 
-                        // Clamp the ratio to reasonable bounds
-                        self.editor_height_ratio = self.editor_height_ratio.clamp(0.2, 0.8);
-                    }
-                }
-            });
+        // Draw resize handle in the center
+        let handle_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::new(60.0, 4.0));
+
+        ui.painter()
+            .rect_filled(handle_rect, CornerRadius::same(2), handle_color);
+
+        // Add grip dots for better visual indication
+        let dot_size = 2.0;
+        let dot_spacing = 6.0;
+        let dots_start_x = rect.center().x - (2.0 * dot_spacing);
+
+        for i in 0..5 {
+            let dot_x = dots_start_x + (i as f32 * dot_spacing);
+            let dot_center = egui::Pos2::new(dot_x, rect.center().y);
+
+            ui.painter().circle_filled(
+                dot_center,
+                dot_size,
+                if self.separator_hover || self.separator_drag {
+                    egui::Color32::from_rgb(180, 180, 180)
+                } else {
+                    egui::Color32::from_rgb(100, 100, 103)
+                },
+            );
+        }
+
+        // Change cursor when hovering over separator
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+
+        // Handle drag to resize with smooth animation
+        if response.dragged() {
+            let delta = response.drag_delta().y;
+            let total_height = ui.available_rect_before_wrap().height();
+
+            if total_height > 0.0 {
+                let height_change = delta / total_height;
+                self.editor_height_ratio += height_change;
+
+                // Clamp the ratio to reasonable bounds with smooth limits
+                self.editor_height_ratio = self.editor_height_ratio.clamp(0.15, 0.85);
+            }
+        }
+
+        // Add helpful tooltip
+        if response.hovered() {
+            response.on_hover_text("Drag to resize editor and results panels");
+        }
     }
 
-    fn show_results_area(&mut self, ui: &mut egui::Ui) {
-        let remaining_height = ui.available_height();
-
+    fn show_results_area(&mut self, ui: &mut egui::Ui, height: f32) {
         Frame::new()
-            .fill(egui::Color32::from_rgb(35, 35, 35))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)))
+            .fill(egui::Color32::from_rgb(27, 27, 30))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 63)))
+            .corner_radius(CornerRadius::same(8))
+            .inner_margin(Margin::same(2))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    // Results header
+                    // Enhanced results header
                     Frame::new()
-                        .fill(egui::Color32::from_rgb(50, 50, 50))
+                        .fill(egui::Color32::from_rgb(39, 39, 42))
+                        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 63)))
+                        .corner_radius(CornerRadius::same(6))
+                        .inner_margin(Margin::same(4))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
-                                ui.add_space(8.0);
+                                ui.add_space(12.0);
+                                ui.label(egui::RichText::new("📊").size(14.0));
+                                ui.add_space(4.0);
                                 ui.label(
-                                    egui::RichText::new("📊 Results")
-                                        .color(egui::Color32::WHITE)
-                                        .size(12.0)
+                                    egui::RichText::new("Query Results")
+                                        .color(egui::Color32::from_rgb(229, 229, 232))
+                                        .size(13.0)
                                         .strong(),
                                 );
 
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        ui.add_space(8.0);
+                                        ui.add_space(12.0);
 
-                                        // Close button
-                                        if ui.small_button("✕").clicked() {
+                                        // Enhanced close button
+                                        let close_button = egui::Button::new(
+                                            egui::RichText::new("✕")
+                                                .color(egui::Color32::WHITE)
+                                                .size(12.0),
+                                        )
+                                        .fill(egui::Color32::from_rgb(239, 68, 68))
+                                        .stroke(egui::Stroke::new(
+                                            1.0,
+                                            egui::Color32::from_rgb(220, 38, 38),
+                                        ))
+                                        .corner_radius(CornerRadius::same(4));
+
+                                        if ui.add_sized([24.0, 24.0], close_button).clicked() {
                                             self.show_result = false;
                                         }
                                     },
@@ -276,21 +378,27 @@ impl SqlEditor {
                             });
                         });
 
-                    // Results content
+                    ui.add_space(4.0);
+
+                    // Enhanced results content with better scrolling
                     egui::ScrollArea::vertical()
-                        .max_height(remaining_height - 40.0) // Leave space for header
+                        .max_height(height - 60.0) // Leave space for header
+                        .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new(&self.result)
-                                        .color(egui::Color32::WHITE)
-                                        .size(11.0)
-                                        .family(egui::FontFamily::Monospace),
-                                );
-                            });
-                            ui.add_space(8.0);
+                            ui.add_space(12.0);
+                            Frame::new()
+                                .fill(egui::Color32::from_rgb(24, 24, 27))
+                                .corner_radius(CornerRadius::same(4))
+                                .inner_margin(Margin::same(8))
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        egui::RichText::new(&self.result)
+                                            .color(egui::Color32::from_rgb(229, 229, 232))
+                                            .size(12.0)
+                                            .family(egui::FontFamily::Monospace),
+                                    );
+                                });
+                            ui.add_space(12.0);
                         });
                 });
             });
@@ -300,17 +408,23 @@ impl SqlEditor {
         let line_count = self.query.lines().count().max(1);
 
         Frame::new()
-            .fill(egui::Color32::from_rgb(50, 50, 50))
+            .fill(egui::Color32::from_rgb(39, 39, 42))
             .show(ui, |ui| {
                 ui.allocate_ui_with_layout(
-                    egui::Vec2::new(50.0, height),
+                    egui::Vec2::new(60.0, height),
                     egui::Layout::top_down(egui::Align::RIGHT),
                     |ui| {
-                        ui.add_space(8.0);
+                        ui.add_space(12.0);
                         for line_num in 1..=line_count.max(20) {
+                            let is_current = line_num == self.cursor_row;
+
                             ui.label(
-                                egui::RichText::new(format!("{:2}", line_num))
-                                    .color(egui::Color32::from_rgb(130, 130, 130))
+                                egui::RichText::new(format!("{:3}", line_num))
+                                    .color(if is_current {
+                                        egui::Color32::from_rgb(229, 229, 232)
+                                    } else {
+                                        egui::Color32::from_rgb(113, 113, 122)
+                                    })
                                     .size(12.0)
                                     .family(egui::FontFamily::Monospace),
                             );
@@ -322,7 +436,7 @@ impl SqlEditor {
 
     fn show_highlighted_editor(&mut self, ui: &mut egui::Ui, height: f32) {
         Frame::new()
-            .fill(egui::Color32::from_rgb(30, 30, 30))
+            .fill(egui::Color32::from_rgb(24, 24, 27))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     // Create a layered approach for syntax highlighting
@@ -330,12 +444,12 @@ impl SqlEditor {
 
                     // First layer: Regular text editor (invisible text)
                     let response = ui.add_sized(
-                        [ui.available_width(), height - 30.0], // Leave space for status
+                        [ui.available_width(), height - 40.0], // Leave space for status
                         egui::TextEdit::multiline(&mut self.query)
                             .font(egui::FontId::monospace(14.0))
                             .background_color(egui::Color32::TRANSPARENT)
                             .text_color(egui::Color32::TRANSPARENT) // Make text invisible
-                            .margin(Margin::same(8))
+                            .margin(Margin::same(12))
                             .id(text_edit_id),
                     );
 
@@ -379,7 +493,7 @@ impl SqlEditor {
                         }
                     });
 
-                    // Status bar at bottom
+                    // Enhanced status bar at bottom
                     self.show_editor_status(ui);
                 });
             });
@@ -434,9 +548,9 @@ impl SqlEditor {
         let clean_word = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
         let upper_word = clean_word.to_uppercase();
 
-        if self.sql_keywords.contains(upper_word.as_str()) {
+        if self.sql_keywords.contains(&upper_word.as_str()) {
             egui::Color32::from_rgb(86, 156, 214) // Blue for keywords
-        } else if self.sql_functions.contains(upper_word.as_str()) {
+        } else if self.sql_functions.contains(&upper_word.as_str()) {
             egui::Color32::from_rgb(220, 220, 170) // Yellow for functions
         } else if word.starts_with("'") && word.ends_with("'") {
             egui::Color32::from_rgb(206, 145, 120) // Orange for strings
@@ -455,30 +569,54 @@ impl SqlEditor {
 
     fn show_editor_status(&self, ui: &mut egui::Ui) {
         Frame::new()
-            .fill(egui::Color32::from_rgb(50, 50, 50))
+            .fill(egui::Color32::from_rgb(39, 39, 42))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 63)))
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(Margin::same(2))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
 
-                    // Ready status
-                    ui.label("🟢");
+                    // Enhanced status indicator
+                    let status_color = if self.syntax_error.is_some() {
+                        egui::Color32::from_rgb(239, 68, 68) // Red for errors
+                    } else {
+                        egui::Color32::from_rgb(34, 197, 94) // Green for ready
+                    };
+
+                    ui.painter().circle_filled(
+                        ui.next_widget_position() + egui::Vec2::new(6.0, 8.0),
+                        4.0,
+                        status_color,
+                    );
+
+                    ui.add_space(16.0);
+
+                    let status_text = if self.syntax_error.is_some() {
+                        "Syntax Error"
+                    } else {
+                        "Ready"
+                    };
+
                     ui.label(
-                        egui::RichText::new("Ready")
-                            .color(egui::Color32::WHITE)
-                            .size(11.0),
+                        egui::RichText::new(status_text)
+                            .color(egui::Color32::from_rgb(229, 229, 232))
+                            .size(11.0)
+                            .strong(),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(8.0);
+                        ui.add_space(12.0);
 
-                        // Position info
+                        // Enhanced position info with better formatting
                         ui.label(
                             egui::RichText::new(format!(
-                                "Ln {}, Col {}",
+                                "Line {}, Column {}",
                                 self.cursor_row, self.cursor_col
                             ))
-                            .color(egui::Color32::from_rgb(170, 170, 170))
-                            .size(10.0),
+                            .color(egui::Color32::from_rgb(161, 161, 170))
+                            .size(10.0)
+                            .family(egui::FontFamily::Monospace),
                         );
                     });
                 });
@@ -692,102 +830,6 @@ impl SqlEditor {
             self.result = format!("✅ Query executed successfully:\n{}", self.query);
         }
         self.show_result = true;
-    }
-
-    fn get_sql_keywords() -> HashSet<&'static str> {
-        [
-            "SELECT",
-            "FROM",
-            "WHERE",
-            "AND",
-            "OR",
-            "NOT",
-            "IN",
-            "LIKE",
-            "BETWEEN",
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "CREATE",
-            "ALTER",
-            "DROP",
-            "TABLE",
-            "INDEX",
-            "VIEW",
-            "DATABASE",
-            "SCHEMA",
-            "JOIN",
-            "INNER",
-            "LEFT",
-            "RIGHT",
-            "FULL",
-            "OUTER",
-            "ON",
-            "AS",
-            "DISTINCT",
-            "ORDER",
-            "BY",
-            "GROUP",
-            "HAVING",
-            "LIMIT",
-            "OFFSET",
-            "UNION",
-            "INTERSECT",
-            "EXCEPT",
-            "CASE",
-            "WHEN",
-            "THEN",
-            "ELSE",
-            "END",
-            "IF",
-            "EXISTS",
-            "NULL",
-            "IS",
-            "ASC",
-            "DESC",
-            "PRIMARY",
-            "KEY",
-            "FOREIGN",
-            "UNIQUE",
-            "CHECK",
-            "DEFAULT",
-            "RELEASE",
-            "WITH",
-            "COUNT",
-        ]
-        .iter()
-        .cloned()
-        .collect()
-    }
-
-    fn get_sql_functions() -> HashSet<&'static str> {
-        [
-            "COUNT",
-            "SUM",
-            "AVG",
-            "MIN",
-            "MAX",
-            "CONCAT",
-            "LENGTH",
-            "UPPER",
-            "LOWER",
-            "TRIM",
-            "LTRIM",
-            "RTRIM",
-            "SUBSTRING",
-            "REPLACE",
-            "NOW",
-            "CURRENT_DATE",
-            "CURRENT_TIME",
-            "COALESCE",
-            "ISNULL",
-            "CAST",
-            "ROUND",
-            "ABS",
-        ]
-        .iter()
-        .cloned()
-        .collect()
     }
 }
 
