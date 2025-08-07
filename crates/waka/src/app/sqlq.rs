@@ -1,9 +1,9 @@
 use eframe::{egui, egui::Frame};
 use epaint::{CornerRadius, Margin};
+use polars_sql::keywords::{all_functions, all_keywords};
 use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use std::collections::HashSet;
 
 pub struct SqlEditor {
     query: String,
@@ -14,8 +14,8 @@ pub struct SqlEditor {
     selected_suggestion: usize,
     cursor_row: usize,
     cursor_col: usize,
-    sql_keywords: HashSet<&'static str>,
-    sql_functions: HashSet<&'static str>,
+    sql_keywords: Vec<&'static str>,
+    sql_functions: Vec<&'static str>,
     current_word: String,
     text_edit_rect: Option<egui::Rect>,
     syntax_error: Option<String>,
@@ -35,8 +35,8 @@ impl SqlEditor {
             selected_suggestion: 0,
             cursor_row: 1,
             cursor_col: 1,
-            sql_keywords: Self::get_sql_keywords(),
-            sql_functions: Self::get_sql_functions(),
+            sql_keywords: all_functions(),
+            sql_functions: all_keywords(),
             current_word: String::new(),
             text_edit_rect: None,
             syntax_error: None,
@@ -434,9 +434,9 @@ impl SqlEditor {
         let clean_word = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
         let upper_word = clean_word.to_uppercase();
 
-        if self.sql_keywords.contains(upper_word.as_str()) {
+        if self.sql_keywords.contains(&upper_word.as_str()) {
             egui::Color32::from_rgb(86, 156, 214) // Blue for keywords
-        } else if self.sql_functions.contains(upper_word.as_str()) {
+        } else if self.sql_functions.contains(&upper_word.as_str()) {
             egui::Color32::from_rgb(220, 220, 170) // Yellow for functions
         } else if word.starts_with("'") && word.ends_with("'") {
             egui::Color32::from_rgb(206, 145, 120) // Orange for strings
@@ -693,118 +693,4 @@ impl SqlEditor {
         }
         self.show_result = true;
     }
-
-    fn get_sql_keywords() -> HashSet<&'static str> {
-        [
-            "SELECT",
-            "FROM",
-            "WHERE",
-            "AND",
-            "OR",
-            "NOT",
-            "IN",
-            "LIKE",
-            "BETWEEN",
-            "INSERT",
-            "UPDATE",
-            "DELETE",
-            "CREATE",
-            "ALTER",
-            "DROP",
-            "TABLE",
-            "INDEX",
-            "VIEW",
-            "DATABASE",
-            "SCHEMA",
-            "JOIN",
-            "INNER",
-            "LEFT",
-            "RIGHT",
-            "FULL",
-            "OUTER",
-            "ON",
-            "AS",
-            "DISTINCT",
-            "ORDER",
-            "BY",
-            "GROUP",
-            "HAVING",
-            "LIMIT",
-            "OFFSET",
-            "UNION",
-            "INTERSECT",
-            "EXCEPT",
-            "CASE",
-            "WHEN",
-            "THEN",
-            "ELSE",
-            "END",
-            "IF",
-            "EXISTS",
-            "NULL",
-            "IS",
-            "ASC",
-            "DESC",
-            "PRIMARY",
-            "KEY",
-            "FOREIGN",
-            "UNIQUE",
-            "CHECK",
-            "DEFAULT",
-            "RELEASE",
-            "WITH",
-            "COUNT",
-        ]
-        .iter()
-        .cloned()
-        .collect()
-    }
-
-    fn get_sql_functions() -> HashSet<&'static str> {
-        [
-            "COUNT",
-            "SUM",
-            "AVG",
-            "MIN",
-            "MAX",
-            "CONCAT",
-            "LENGTH",
-            "UPPER",
-            "LOWER",
-            "TRIM",
-            "LTRIM",
-            "RTRIM",
-            "SUBSTRING",
-            "REPLACE",
-            "NOW",
-            "CURRENT_DATE",
-            "CURRENT_TIME",
-            "COALESCE",
-            "ISNULL",
-            "CAST",
-            "ROUND",
-            "ABS",
-        ]
-        .iter()
-        .cloned()
-        .collect()
-    }
-}
-
-#[derive(Debug, Clone)]
-struct SqlToken {
-    text: String,
-    token_type: TokenType,
-}
-
-#[derive(Debug, Clone)]
-enum TokenType {
-    Keyword,
-    Function,
-    String,
-    Number,
-    Comment,
-    Operator,
-    Error,
-    Regular,
 }
