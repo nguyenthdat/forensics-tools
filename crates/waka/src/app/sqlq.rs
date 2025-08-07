@@ -197,48 +197,96 @@ impl SqlEditor {
     }
 
     fn show_resize_separator(&mut self, ui: &mut egui::Ui) {
-        // Create a draggable horizontal separator
-        Frame::new()
-            .fill(egui::Color32::from_rgb(60, 60, 60))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
+        let separator_height = 16.0; // Make it taller for easier grabbing
 
-                    // Resize handle with visual indicator
-                    ui.label(
-                        egui::RichText::new("⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯")
-                            .color(egui::Color32::from_rgb(120, 120, 120))
-                            .size(8.0),
-                    );
-                });
+        // Create an interactive area that spans the full width
+        let (rect, response) = ui.allocate_exact_size(
+            egui::Vec2::new(ui.available_width(), separator_height),
+            egui::Sense::hover().union(egui::Sense::drag()),
+        );
 
-                // Make the entire separator draggable
-                let separator_rect = ui.min_rect();
-                let response = ui.interact(
-                    separator_rect,
-                    egui::Id::new("editor_resize_separator"),
-                    egui::Sense::drag(),
-                );
+        // Visual feedback based on interaction state
+        let (bg_color, grip_color) = if response.dragged() {
+            // Active drag state
+            (
+                egui::Color32::from_rgb(70, 120, 180), // Blue tint when dragging
+                egui::Color32::from_rgb(200, 200, 200),
+            )
+        } else if response.hovered() {
+            // Hover state
+            (
+                egui::Color32::from_rgb(60, 60, 60), // Lighter on hover
+                egui::Color32::from_rgb(180, 180, 180),
+            )
+        } else {
+            // Default state
+            (
+                egui::Color32::from_rgb(45, 45, 45),
+                egui::Color32::from_rgb(120, 120, 120),
+            )
+        };
 
-                // Change cursor when hovering over separator
-                if response.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-                }
+        // Draw background
+        ui.painter().rect_filled(rect, 2.0, bg_color);
 
-                // Handle drag to resize
-                if response.dragged() {
-                    let delta = response.drag_delta().y;
-                    let total_height = ui.available_rect_before_wrap().height();
+        // Draw border
+        ui.painter().rect_stroke(
+            rect,
+            2.0,
+            egui::Stroke::new(0.5, egui::Color32::from_rgb(80, 80, 80)),
+            egui::StrokeKind::Inside,
+        );
 
-                    if total_height > 0.0 {
-                        let height_change = delta / total_height;
-                        self.editor_height_ratio += height_change;
+        // Draw grip pattern in the center
+        let center = rect.center();
+        let grip_width = 40.0;
+        let grip_height = 2.0;
+        let line_spacing = 2.0;
 
-                        // Clamp the ratio to reasonable bounds
-                        self.editor_height_ratio = self.editor_height_ratio.clamp(0.2, 0.8);
-                    }
-                }
-            });
+        // Draw three horizontal lines as grip indicator
+        for i in -1..=1 {
+            let y_offset = i as f32 * (grip_height + line_spacing);
+            let line_rect = egui::Rect::from_center_size(
+                egui::Pos2::new(center.x, center.y + y_offset),
+                egui::Vec2::new(grip_width, grip_height),
+            );
+            ui.painter().rect_filled(line_rect, 1.0, grip_color);
+        }
+
+        // Change cursor when hovering or dragging
+        if response.hovered() || response.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+        }
+
+        // Handle drag to resize
+        if response.dragged() {
+            let delta = response.drag_delta().y;
+
+            // Get the total available height from the main show function
+            // We need to be more careful about how we calculate this
+            let available_height = ui.available_height()
+                + (ui.available_rect_before_wrap().height() - ui.available_height());
+
+            if available_height > 200.0 {
+                // Minimum total height check
+                // Convert pixel delta to ratio change
+                let height_change = delta / available_height;
+                let new_ratio = self.editor_height_ratio + height_change;
+
+                // Clamp to reasonable bounds
+                let min_editor_ratio = 0.2; // At least 20% for editor
+                let max_editor_ratio = 0.8; // At most 80% for editor
+
+                self.editor_height_ratio = new_ratio.clamp(min_editor_ratio, max_editor_ratio);
+            }
+        }
+
+        // Show tooltip on hover
+        if response.hovered() {
+            egui::Tooltip::for_enabled(&response.on_hover_ui_at_pointer(|ui| {
+                ui.label("Drag to resize editor and results panels");
+            }));
+        }
     }
 
     fn show_results_area(&mut self, ui: &mut egui::Ui) {
