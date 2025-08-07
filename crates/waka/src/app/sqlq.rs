@@ -1,270 +1,401 @@
-use eframe::egui;
+use eframe::{egui, egui::Frame};
+use epaint::Margin;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
 use std::collections::HashSet;
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style, ThemeSet};
-use syntect::parsing::SyntaxSet;
-use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
 pub struct SqlEditor {
     query: String,
     result: String,
     show_result: bool,
-    syntax_set: SyntaxSet,
-    theme_set: ThemeSet,
     suggestions: Vec<String>,
     show_suggestions: bool,
     selected_suggestion: usize,
-    last_cursor_pos: Option<usize>,
+    cursor_row: usize,
+    cursor_col: usize,
     sql_keywords: HashSet<&'static str>,
     sql_functions: HashSet<&'static str>,
+    current_word: String,
+    text_edit_rect: Option<egui::Rect>, // Store text editor position
 }
 
 impl SqlEditor {
     pub fn new() -> Self {
-        let syntax_set = SyntaxSet::load_defaults_newlines();
-        let theme_set = ThemeSet::load_defaults();
-
         Self {
             query: String::new(),
             result: String::new(),
             show_result: false,
-            syntax_set,
-            theme_set,
             suggestions: Vec::new(),
             show_suggestions: false,
             selected_suggestion: 0,
-            last_cursor_pos: None,
+            cursor_row: 1,
+            cursor_col: 1,
             sql_keywords: Self::get_sql_keywords(),
             sql_functions: Self::get_sql_functions(),
+            current_word: String::new(),
+            text_edit_rect: None,
         }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        ui.vertical(|ui| {
-            ui.heading("SQL Query Editor");
+        // Main container with dark background (smaller height)
+        Frame::new()
+            .fill(egui::Color32::from_rgb(30, 30, 30))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Top toolbar
+                    self.show_toolbar(ui);
 
-            // Query validation status
-            self.show_query_status(ui);
+                    // Editor area with line numbers (smaller)
+                    self.show_editor_with_line_numbers(ui);
 
-            // Query input area with enhanced features
-            ui.label("Enter your SQL query:");
-
-            let text_edit = egui::TextEdit::multiline(&mut self.query)
-                .desired_rows(10)
-                .desired_width(f32::INFINITY)
-                .font(egui::TextStyle::Monospace)
-                .code_editor();
-
-            let response = ui.add(text_edit);
-
-            // Handle autocomplete
-            if response.changed() {
-                self.update_autocomplete(ui);
-            }
-
-            // Show autocomplete popup
-            if self.show_suggestions && !self.suggestions.is_empty() {
-                self.show_autocomplete_popup(ui);
-            }
-
-            // Syntax highlighted preview
-            ui.separator();
-            ui.collapsing("Syntax Highlighted Preview", |ui| {
-                self.show_syntax_highlighted_query(ui);
+                    // Suggestions popup (overlay) - show after editor to get correct position
+                    if self.show_suggestions && !self.suggestions.is_empty() {
+                        self.show_suggestions_popup(ui);
+                    }
+                });
             });
+    }
 
-            // Action buttons
-            ui.horizontal(|ui| {
-                if ui.button("▶ Execute Query").clicked() {
-                    self.execute_query();
-                }
+    fn show_toolbar(&mut self, ui: &mut egui::Ui) {
+        Frame::new()
+            .fill(egui::Color32::from_rgb(40, 40, 40))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
 
-                if ui.button("🗑 Clear").clicked() {
-                    self.clear_editor();
-                }
+                    // File icon and name
+                    ui.label("📄");
+                    ui.label(
+                        egui::RichText::new("console")
+                            .color(egui::Color32::WHITE)
+                            .size(12.0),
+                    );
+                    ui.label("×");
 
-                if ui.button("✨ Format Query").clicked() {
-                    self.format_query();
-                }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(8.0);
 
-                if ui.button("✅ Validate SQL").clicked() {
-                    self.validate_query();
-                }
+                        // Schema selector
+                        egui::ComboBox::from_label("")
+                            .selected_text("🗂️ <schema>")
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut "", "", "public");
+                                ui.selectable_value(&mut "", "", "information_schema");
+                            });
 
-                // Quick insert buttons
-                ui.separator();
-                if ui.small_button("SELECT").clicked() {
-                    self.insert_template("SELECT * FROM table_name WHERE ");
-                }
-                if ui.small_button("INSERT").clicked() {
-                    self.insert_template("INSERT INTO table_name (column1, column2) VALUES (?, ?)");
-                }
-                if ui.small_button("UPDATE").clicked() {
-                    self.insert_template("UPDATE table_name SET column1 = ? WHERE ");
-                }
-            });
+                        ui.separator();
 
-            // Results area with enhanced display
-            if self.show_result {
-                ui.separator();
-                ui.heading("Query Result");
-
-                egui::ScrollArea::vertical()
-                    .max_height(250.0)
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.result)
-                                .desired_rows(8)
-                                .desired_width(f32::INFINITY)
-                                .font(egui::TextStyle::Monospace)
-                                .interactive(false),
-                        );
+                        // Control buttons
+                        if ui.small_button("▶").clicked() {
+                            self.execute_query();
+                        }
+                        if ui.small_button("⏸").clicked() {
+                            // Pause execution
+                        }
+                        if ui.small_button("⏹").clicked() {
+                            // Stop execution
+                        }
                     });
-            }
-        });
-    }
-
-    fn show_query_status(&self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            // Query validation indicator
-            match self.parse_sql(&self.query) {
-                Ok(_) if !self.query.trim().is_empty() => {
-                    ui.colored_label(egui::Color32::GREEN, "✅ Valid SQL");
-                }
-                Err(e) if !self.query.trim().is_empty() => {
-                    ui.colored_label(egui::Color32::RED, format!("❌ SQL Error: {}", e));
-                }
-                _ => {
-                    ui.colored_label(egui::Color32::GRAY, "⏳ Enter SQL query...");
-                }
-            }
-
-            ui.separator();
-
-            // Character count
-            ui.label(format!("Characters: {}", self.query.len()));
-
-            // Line count
-            ui.label(format!("Lines: {}", self.query.lines().count()));
-        });
-    }
-
-    fn show_syntax_highlighted_query(&self, ui: &mut egui::Ui) {
-        if self.query.is_empty() {
-            ui.label("No query to highlight");
-            return;
-        }
-
-        // Use syntect for syntax highlighting
-        if let Some(syntax) = self.syntax_set.find_syntax_by_extension("sql") {
-            let theme = &self.theme_set.themes["base16-ocean.dark"];
-            let mut highlight_lines = HighlightLines::new(syntax, theme);
-
-            ui.horizontal_wrapped(|ui| {
-                for line in LinesWithEndings::from(&self.query) {
-                    let ranges: Vec<(Style, &str)> = highlight_lines
-                        .highlight_line(line, &self.syntax_set)
-                        .unwrap_or_default();
-
-                    for (style, text) in ranges {
-                        let color = egui::Color32::from_rgb(
-                            style.foreground.r,
-                            style.foreground.g,
-                            style.foreground.b,
-                        );
-                        ui.colored_label(color, text);
-                    }
-                }
+                });
             });
+    }
+
+    fn show_editor_with_line_numbers(&mut self, ui: &mut egui::Ui) {
+        // Make editor much smaller - only 30% of available height
+        let available_height = ui.available_height() * 0.3;
+
+        Frame::new()
+            .fill(egui::Color32::from_rgb(30, 30, 30))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Line numbers column (smaller)
+                    self.show_line_numbers(ui, available_height);
+
+                    // Editor area
+                    self.show_editor_area(ui, available_height);
+                });
+            });
+    }
+
+    fn show_line_numbers(&self, ui: &mut egui::Ui, height: f32) {
+        let line_count = self.query.lines().count().max(1);
+
+        Frame::new()
+            .fill(egui::Color32::from_rgb(40, 40, 40))
+            .show(ui, |ui| {
+                ui.allocate_ui_with_layout(
+                    egui::Vec2::new(40.0, height), // Smaller width
+                    egui::Layout::top_down(egui::Align::RIGHT),
+                    |ui| {
+                        ui.add_space(4.0);
+                        for line_num in 1..=line_count.max(10) {
+                            // Show fewer lines
+                            ui.label(
+                                egui::RichText::new(format!("{:2}", line_num))
+                                    .color(egui::Color32::from_rgb(120, 120, 120))
+                                    .size(11.0) // Smaller font
+                                    .family(egui::FontFamily::Monospace),
+                            );
+                        }
+                    },
+                );
+            });
+    }
+
+    fn show_editor_area(&mut self, ui: &mut egui::Ui, height: f32) {
+        Frame::new()
+            .fill(egui::Color32::from_rgb(30, 30, 30))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Main text editor
+                    let response = ui.add_sized(
+                        [ui.available_width(), height],
+                        egui::TextEdit::multiline(&mut self.query)
+                            .font(egui::FontId::monospace(13.0)) // Smaller font
+                            .background_color(egui::Color32::from_rgb(30, 30, 30))
+                            .text_color(egui::Color32::WHITE)
+                            .margin(Margin::same(6)), // Smaller margin
+                    );
+
+                    // Store the text editor's rect for cursor positioning
+                    self.text_edit_rect = Some(response.rect);
+
+                    // Update cursor position based on text content
+                    if response.has_focus() {
+                        self.update_cursor_position();
+                    }
+
+                    if response.changed() {
+                        self.update_suggestions();
+                    }
+
+                    // Handle keyboard input for suggestions
+                    ui.input(|i| {
+                        if self.show_suggestions && !self.suggestions.is_empty() {
+                            // Tab to accept suggestion
+                            if i.key_pressed(egui::Key::Tab) {
+                                if let Some(suggestion) =
+                                    self.suggestions.get(self.selected_suggestion).cloned()
+                                {
+                                    self.apply_suggestion(&suggestion);
+                                }
+                            }
+                            // Arrow keys to navigate suggestions
+                            else if i.key_pressed(egui::Key::ArrowUp) {
+                                if self.selected_suggestion > 0 {
+                                    self.selected_suggestion -= 1;
+                                }
+                            } else if i.key_pressed(egui::Key::ArrowDown) {
+                                if self.selected_suggestion < self.suggestions.len() - 1 {
+                                    self.selected_suggestion += 1;
+                                }
+                            }
+                            // Escape to hide suggestions
+                            else if i.key_pressed(egui::Key::Escape) {
+                                self.show_suggestions = false;
+                            }
+                        }
+                    });
+
+                    // Status bar (smaller)
+                    self.show_status_bar(ui);
+                });
+            });
+    }
+
+    fn update_cursor_position(&mut self) {
+        // Calculate cursor position based on text content
+        let lines: Vec<&str> = self.query.lines().collect();
+        self.cursor_row = lines.len().max(1);
+
+        if let Some(last_line) = lines.last() {
+            self.cursor_col = last_line.len() + 1;
         } else {
-            // Fallback to simple highlighting
-            self.show_simple_highlighted_query(ui);
+            self.cursor_col = 1;
         }
     }
 
-    fn show_simple_highlighted_query(&self, ui: &mut egui::Ui) {
-        let words: Vec<&str> = self.query.split_whitespace().collect();
+    fn get_cursor_screen_position(&self) -> egui::Pos2 {
+        if let Some(rect) = self.text_edit_rect {
+            // Font metrics for monospace font
+            let font_size = 13.0;
+            let line_height = font_size * 1.2; // Approximate line height
+            let char_width = font_size * 0.6; // Approximate character width for monospace
 
-        ui.horizontal_wrapped(|ui| {
-            for word in words {
-                let clean_word = word
-                    .trim_matches(|c: char| !c.is_alphanumeric())
-                    .to_uppercase();
+            // Calculate position based on cursor row and column
+            let x = rect.left() + 6.0 + (self.cursor_col as f32 - 1.0) * char_width; // 6.0 is margin
+            let y = rect.top() + 6.0 + (self.cursor_row as f32 - 1.0) * line_height;
 
-                if self.sql_keywords.contains(clean_word.as_str()) {
-                    ui.colored_label(egui::Color32::from_rgb(86, 156, 214), word);
-                } else if self.sql_functions.contains(clean_word.as_str()) {
-                    ui.colored_label(egui::Color32::from_rgb(220, 220, 170), word);
-                } else if word.starts_with("'") && word.ends_with("'") {
-                    ui.colored_label(egui::Color32::from_rgb(206, 145, 120), word);
-                } else if word.chars().all(|c| c.is_numeric() || c == '.') {
-                    ui.colored_label(egui::Color32::from_rgb(181, 206, 168), word);
-                } else {
-                    ui.label(word);
-                }
-                ui.label(" ");
-            }
-        });
-    }
-
-    fn update_autocomplete(&mut self, ui: &mut egui::Ui) {
-        // Simple autocomplete based on current word
-        let words: Vec<&str> = self.query.split_whitespace().collect();
-        if let Some(last_word) = words.last() {
-            if last_word.len() >= 2 {
-                self.suggestions = self.get_suggestions(last_word);
-                self.show_suggestions = !self.suggestions.is_empty();
-                self.selected_suggestion = 0;
-            } else {
-                self.show_suggestions = false;
-            }
+            egui::Pos2::new(x, y)
+        } else {
+            // Fallback to center of screen if no text edit rect
+            egui::Pos2::new(400.0, 300.0)
         }
     }
 
-    fn show_autocomplete_popup(&mut self, ui: &mut egui::Ui) {
-        let mut selected_suggestion: Option<String> = None;
+    fn show_suggestions_popup(&mut self, ui: &mut egui::Ui) {
+        // Position popup at typing cursor instead of mouse cursor
+        let cursor_pos = self.get_cursor_screen_position();
+        let popup_pos = cursor_pos + egui::Vec2::new(0.0, 20.0); // Offset below cursor
 
-        ui.group(|ui| {
-            ui.vertical(|ui| {
-                ui.label("💡 Suggestions:");
-                for (i, suggestion) in self.suggestions.iter().take(8).enumerate() {
-                    let is_selected = i == self.selected_suggestion;
-                    let response = ui.selectable_label(is_selected, suggestion);
-                    if response.clicked() {
-                        selected_suggestion = Some(suggestion.clone());
-                    }
-                }
+        let mut clicked_suggestion: Option<String> = None;
+
+        egui::Area::new(egui::Id::new("sql_suggestions"))
+            .fixed_pos(popup_pos)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(&ui.style())
+                    .fill(egui::Color32::from_rgb(50, 50, 50))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 80)))
+                    .show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            ui.set_min_width(180.0); // Smaller popup
+
+                            for (i, suggestion) in self.suggestions.iter().take(6).enumerate() {
+                                // Show fewer suggestions
+                                let is_selected = i == self.selected_suggestion;
+
+                                let response = ui.selectable_label(
+                                    is_selected,
+                                    egui::RichText::new(suggestion)
+                                        .color(if is_selected {
+                                            egui::Color32::WHITE
+                                        } else {
+                                            egui::Color32::from_rgb(200, 200, 200)
+                                        })
+                                        .family(egui::FontFamily::Monospace)
+                                        .size(12.0), // Smaller text
+                                );
+
+                                if response.clicked() {
+                                    clicked_suggestion = Some(suggestion.clone());
+                                }
+                            }
+
+                            // Show Tab hint at bottom
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.label("💡");
+                                ui.label(
+                                    egui::RichText::new("Press Tab to accept")
+                                        .color(egui::Color32::from_rgb(150, 150, 150))
+                                        .size(9.0),
+                                );
+                            });
+                        });
+                    });
             });
-        });
 
-        if let Some(suggestion) = selected_suggestion {
+        if let Some(suggestion) = clicked_suggestion {
             self.apply_suggestion(&suggestion);
         }
+    }
+
+    fn show_status_bar(&self, ui: &mut egui::Ui) {
+        Frame::new()
+            .fill(egui::Color32::from_rgb(0, 122, 204))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(6.0);
+
+                    // Validation status
+                    match self.parse_sql(&self.query) {
+                        Ok(_) if !self.query.trim().is_empty() => {
+                            ui.label(
+                                egui::RichText::new("✓ SQL Valid")
+                                    .color(egui::Color32::WHITE)
+                                    .size(10.0), // Smaller font
+                            );
+                        }
+                        Err(_) if !self.query.trim().is_empty() => {
+                            ui.label(
+                                egui::RichText::new("✗ SQL Error")
+                                    .color(egui::Color32::from_rgb(255, 100, 100))
+                                    .size(10.0),
+                            );
+                        }
+                        _ => {
+                            ui.label(
+                                egui::RichText::new("Ready")
+                                    .color(egui::Color32::WHITE)
+                                    .size(10.0),
+                            );
+                        }
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(6.0);
+
+                        // Character count
+                        ui.label(
+                            egui::RichText::new(format!("{} chars", self.query.len()))
+                                .color(egui::Color32::WHITE)
+                                .size(10.0),
+                        );
+
+                        ui.separator();
+
+                        // Cursor position
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Ln {}, Col {}",
+                                self.cursor_row, self.cursor_col
+                            ))
+                            .color(egui::Color32::WHITE)
+                            .size(10.0),
+                        );
+                    });
+                });
+            });
+    }
+
+    fn update_suggestions(&mut self) {
+        // Get current word being typed
+        self.current_word = self.get_current_word();
+
+        if self.current_word.len() >= 2 {
+            self.suggestions = self.get_suggestions(&self.current_word);
+            self.show_suggestions = !self.suggestions.is_empty();
+            self.selected_suggestion = 0;
+        } else {
+            self.show_suggestions = false;
+        }
+    }
+
+    fn get_current_word(&self) -> String {
+        let words: Vec<&str> = self.query.split_whitespace().collect();
+        words.last().map_or("", |v| v).to_uppercase()
     }
 
     fn get_suggestions(&self, prefix: &str) -> Vec<String> {
         let mut suggestions = Vec::new();
         let prefix_upper = prefix.to_uppercase();
 
-        // Keywords
+        // SQL Keywords
         for keyword in &self.sql_keywords {
             if keyword.starts_with(&prefix_upper) {
                 suggestions.push(keyword.to_string());
             }
         }
 
-        // Functions
+        // SQL Functions
         for function in &self.sql_functions {
             if function.starts_with(&prefix_upper) {
                 suggestions.push(format!("{}()", function));
             }
         }
 
+        // Common SQL clauses
+        let clauses = ["RELEASE", "INSERT", "INSERT INTO"];
+        for clause in &clauses {
+            if clause.starts_with(&prefix_upper) {
+                suggestions.push(clause.to_string());
+            }
+        }
+
         suggestions.sort();
-        suggestions.truncate(8);
+        suggestions.truncate(6); // Show fewer suggestions
         suggestions
     }
 
@@ -285,113 +416,10 @@ impl SqlEditor {
         Parser::parse_sql(&dialect, sql).map_err(|e| e.to_string())
     }
 
-    fn validate_query(&mut self) {
-        match self.parse_sql(&self.query) {
-            Ok(statements) => {
-                self.result = format!(
-                    "✅ SQL Validation Successful!\n\nParsed {} statement(s):\n{}",
-                    statements.len(),
-                    statements
-                        .iter()
-                        .enumerate()
-                        .map(|(i, stmt)| format!(
-                            "{}. {}",
-                            i + 1,
-                            format!("{:?}", stmt).chars().take(100).collect::<String>()
-                        ))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                );
-            }
-            Err(e) => {
-                self.result = format!("❌ SQL Validation Failed:\n\n{}", e);
-            }
-        }
-        self.show_result = true;
-    }
-
-    fn format_query(&mut self) {
-        // Basic SQL formatting using sqlparser
-        match self.parse_sql(&self.query) {
-            Ok(statements) => {
-                self.query = statements
-                    .iter()
-                    .map(|stmt| format!("{}", stmt))
-                    .collect::<Vec<_>>()
-                    .join(";\n");
-            }
-            Err(_) => {
-                // Fallback to simple formatting
-                self.query = self
-                    .query
-                    .replace(" select ", " SELECT ")
-                    .replace(" from ", " FROM ")
-                    .replace(" where ", " WHERE ")
-                    .replace(" and ", " AND ")
-                    .replace(" or ", " OR ");
-            }
-        }
-    }
-
-    fn insert_template(&mut self, template: &str) {
-        if !self.query.is_empty() && !self.query.ends_with('\n') {
-            self.query.push('\n');
-        }
-        self.query.push_str(template);
-    }
-
-    fn clear_editor(&mut self) {
-        self.query.clear();
-        self.result.clear();
-        self.show_result = false;
-        self.show_suggestions = false;
-    }
-
     fn execute_query(&mut self) {
-        if self.query.trim().is_empty() {
-            self.result = "❌ Error: Empty query".to_string();
-            self.show_result = true;
-            return;
-        }
-
-        // Validate SQL first
-        match self.parse_sql(&self.query) {
-            Ok(statements) => {
-                // TODO: Implement actual SQL execution
-                let query_type = self.get_query_type(&statements[0]);
-                self.result = format!(
-                    "✅ Query executed successfully!\n\nQuery Type: {}\nQuery:\n{}\n\n📊 Mock Results:\n{}\n\n⏱ Execution time: 0.003s",
-                    query_type,
-                    self.query,
-                    self.generate_mock_result(&query_type)
-                );
-            }
-            Err(e) => {
-                self.result = format!("❌ SQL Error: {}", e);
-            }
-        }
+        // TODO: Implement actual SQL execution
+        self.result = format!("Executed query:\n{}", self.query);
         self.show_result = true;
-    }
-
-    fn get_query_type(&self, statement: &Statement) -> String {
-        match statement {
-            Statement::Query(_) => "SELECT".to_string(),
-            Statement::Insert { .. } => "INSERT".to_string(),
-            Statement::Update { .. } => "UPDATE".to_string(),
-            Statement::Delete { .. } => "DELETE".to_string(),
-            Statement::CreateTable { .. } => "CREATE TABLE".to_string(),
-            _ => "OTHER".to_string(),
-        }
-    }
-
-    fn generate_mock_result(&self, query_type: &str) -> String {
-        match query_type {
-            "SELECT" => "| id | name     | email           |\n|----|---------|-----------------|\n| 1  | John Doe | john@example.com|\n| 2  | Jane Doe | jane@example.com|",
-            "INSERT" => "1 row inserted successfully",
-            "UPDATE" => "2 rows updated successfully", 
-            "DELETE" => "1 row deleted successfully",
-            _ => "Operation completed successfully"
-        }.to_string()
     }
 
     fn get_sql_keywords() -> HashSet<&'static str> {
@@ -451,7 +479,7 @@ impl SqlEditor {
             "UNIQUE",
             "CHECK",
             "DEFAULT",
-            "AUTO_INCREMENT",
+            "RELEASE",
         ]
         .iter()
         .cloned()
