@@ -23,4 +23,4 @@ polars-sql = { workspace = true, features = [
 sqlparser = { workspace = true }
 syntect = { workspace = true }
 unicode-segmentation = { workspace = true }
-# qsv = { workspace = true }
+qsv = { workspace = true, features = ["distrib_features", "polars"] }

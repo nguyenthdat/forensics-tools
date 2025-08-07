@@ -11,7 +11,7 @@
   "rust-analyzer.check.workspace": false,
   "rust-analyzer.showUnlinkedFileNotification": false,
   "rust-analyzer.cachePriming.numThreads": "physical",
-  "rust-analyzer.cargo.features": "all",
+  "rust-analyzer.cargo.features": ["all_features"],
   "[toml]": {
     "editor.defaultFormatter": "tamasfe.even-better-toml"
   },
