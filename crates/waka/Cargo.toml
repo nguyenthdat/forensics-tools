@@ -10,3 +10,6 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 eframe = { workspace = true, features = ["persistence", "serde", "wgpu"] }
+sqlparser = "0.58.0"
+syntect = "5.2.0"
+unicode-segmentation = "1.12.0"

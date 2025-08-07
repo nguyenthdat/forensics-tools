@@ -1,6 +1,9 @@
 use eframe::egui;
 
-use crate::{APP_VERSION, app::sqlq::SqlEditor};
+use crate::{
+    APP_VERSION,
+    app::{ftsq::FtsEditor, sqlq::SqlEditor},
+};
 
 mod filer;
 mod ftsq;
@@ -15,6 +18,7 @@ pub enum WakaMode {
 
 pub struct WakaApp {
     sql_editor: SqlEditor,
+    fts_editor: FtsEditor,
     current_mode: WakaMode,
 }
 
@@ -23,6 +27,7 @@ impl WakaApp {
         WakaApp {
             sql_editor: SqlEditor::new(),
             current_mode: WakaMode::Filer,
+            fts_editor: FtsEditor::new(),
         }
     }
 }
@@ -222,8 +227,9 @@ impl eframe::App for WakaApp {
                     // TODO: Add file explorer UI here
                 }
                 WakaMode::FullTextSearch => {
-                    ui.label("Full Text Search Mode");
+                    // ui.label("Full Text Search Mode");
                     // TODO: Add full text search UI here
+                    self.fts_editor.show(ui);
                 }
                 WakaMode::Sql => {
                     self.sql_editor.show(ui);
