@@ -20,8 +20,8 @@ pub struct SqlEditor {
     text_edit_rect: Option<egui::Rect>,
     syntax_error: Option<String>,
     limit: i32,
-    show_format: bool,
     show_history: bool,
+    editor_height_ratio: f32,
 }
 
 impl SqlEditor {
@@ -41,8 +41,8 @@ impl SqlEditor {
             text_edit_rect: None,
             syntax_error: None,
             limit: 100,
-            show_format: false,
             show_history: false,
+            editor_height_ratio: 0.6,
         }
     }
 
@@ -55,8 +55,21 @@ impl SqlEditor {
                     // Top toolbar
                     self.show_toolbar(ui);
 
-                    // Editor area (larger - 60% of height)
-                    self.show_main_editor_area(ui);
+                    // Calculate available space for resizable content
+                    let available_rect = ui.available_rect_before_wrap();
+                    let total_height = available_rect.height();
+
+                    // Editor area with resizable height
+                    let editor_height = total_height * self.editor_height_ratio;
+                    self.show_main_editor_area(ui, editor_height);
+
+                    // Horizontal separator/splitter
+                    self.show_resize_separator(ui);
+
+                    // Results area (remaining space)
+                    if self.show_result {
+                        self.show_results_area(ui);
+                    }
 
                     // Show syntax error if any
                     self.show_syntax_error(ui);
@@ -168,19 +181,117 @@ impl SqlEditor {
             });
     }
 
-    fn show_main_editor_area(&mut self, ui: &mut egui::Ui) {
-        let available_height = ui.available_height() * 0.6; // 60% of height
-
+    fn show_main_editor_area(&mut self, ui: &mut egui::Ui, height: f32) {
         Frame::new()
             .fill(egui::Color32::from_rgb(40, 40, 40))
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // Line numbers
-                    self.show_line_numbers(ui, available_height);
+                    self.show_line_numbers(ui, height);
 
                     // Editor with syntax highlighting overlay
-                    self.show_highlighted_editor(ui, available_height);
+                    self.show_highlighted_editor(ui, height);
+                });
+            });
+    }
+
+    fn show_resize_separator(&mut self, ui: &mut egui::Ui) {
+        // Create a draggable horizontal separator
+        Frame::new()
+            .fill(egui::Color32::from_rgb(60, 60, 60))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+
+                    // Resize handle with visual indicator
+                    ui.label(
+                        egui::RichText::new("⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯")
+                            .color(egui::Color32::from_rgb(120, 120, 120))
+                            .size(8.0),
+                    );
+                });
+
+                // Make the entire separator draggable
+                let separator_rect = ui.min_rect();
+                let response = ui.interact(
+                    separator_rect,
+                    egui::Id::new("editor_resize_separator"),
+                    egui::Sense::drag(),
+                );
+
+                // Change cursor when hovering over separator
+                if response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                }
+
+                // Handle drag to resize
+                if response.dragged() {
+                    let delta = response.drag_delta().y;
+                    let total_height = ui.available_rect_before_wrap().height();
+
+                    if total_height > 0.0 {
+                        let height_change = delta / total_height;
+                        self.editor_height_ratio += height_change;
+
+                        // Clamp the ratio to reasonable bounds
+                        self.editor_height_ratio = self.editor_height_ratio.clamp(0.2, 0.8);
+                    }
+                }
+            });
+    }
+
+    fn show_results_area(&mut self, ui: &mut egui::Ui) {
+        let remaining_height = ui.available_height();
+
+        Frame::new()
+            .fill(egui::Color32::from_rgb(35, 35, 35))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Results header
+                    Frame::new()
+                        .fill(egui::Color32::from_rgb(50, 50, 50))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new("📊 Results")
+                                        .color(egui::Color32::WHITE)
+                                        .size(12.0)
+                                        .strong(),
+                                );
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.add_space(8.0);
+
+                                        // Close button
+                                        if ui.small_button("✕").clicked() {
+                                            self.show_result = false;
+                                        }
+                                    },
+                                );
+                            });
+                        });
+
+                    // Results content
+                    egui::ScrollArea::vertical()
+                        .max_height(remaining_height - 40.0) // Leave space for header
+                        .show(ui, |ui| {
+                            ui.add_space(8.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(8.0);
+                                ui.label(
+                                    egui::RichText::new(&self.result)
+                                        .color(egui::Color32::WHITE)
+                                        .size(11.0)
+                                        .family(egui::FontFamily::Monospace),
+                                );
+                            });
+                            ui.add_space(8.0);
+                        });
                 });
             });
     }
@@ -416,7 +527,6 @@ impl SqlEditor {
             .replace(" HAVING ", "\nHAVING ");
     }
 
-    // ... (keeping all the existing methods for suggestions, validation, etc.)
     fn validate_syntax(&mut self) {
         if self.query.trim().is_empty() {
             self.syntax_error = None;
