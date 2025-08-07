@@ -171,27 +171,36 @@ impl SqlEditor {
             .corner_radius(CornerRadius::same(4))
             .inner_margin(Margin::symmetric(16, 8))
             .show(ui, |ui| {
-                let response = ui.add_sized(
-                    [ui.available_width(), editor_height - 32.0],
-                    egui::TextEdit::multiline(&mut self.query)
-                        .font(egui::FontId::monospace(13.0))
-                        .background_color(egui::Color32::TRANSPARENT)
-                        .text_color(egui::Color32::from_rgb(220, 220, 220))
-                        .margin(Margin::same(12))
-                );
-                
-                if response.changed() {
-                    self.validate_syntax();
-                    self.update_suggestions();
-                }
-                
-                if response.has_focus() {
-                    self.update_cursor_position();
-                }
-                
-                self.text_edit_rect = Some(response.rect);
+                ui.horizontal(|ui| {
+                    // Calculate line number width dynamically
+                    let line_count = self.query.lines().count().max(1);
+                    let max_line_number = line_count.max(20);
+                    let digits = if max_line_number < 10 {
+                        1
+                    } else if max_line_number < 100 {
+                        2
+                    } else {
+                        3
+                    };
+                    let char_width = 8.0;
+                    let padding = 16.0;
+                    let line_number_width = (digits as f32 * char_width) + padding;
+
+                    // Line numbers with calculated width
+                    ui.allocate_ui_with_layout(
+                        egui::Vec2::new(line_number_width, editor_height - 32.0),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            self.show_line_numbers(ui, editor_height - 32.0);
+                        },
+                    );
+
+                    // Editor with syntax highlighting
+                    self.show_highlighted_editor(ui, editor_height - 32.0);
+                });
             });
     }
+
 
     fn show_query_controls(&mut self, ui: &mut egui::Ui) {
         Frame::new()
@@ -781,31 +790,38 @@ impl SqlEditor {
             });
     }
 
-    fn show_highlighted_editor(&mut self, ui: &mut egui::Ui, height: f32) {
+ fn show_highlighted_editor(&mut self, ui: &mut egui::Ui, height: f32) {
         Frame::new()
             .fill(egui::Color32::from_rgb(30, 30, 30))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    // Create a layered approach for syntax highlighting
                     let text_edit_id = egui::Id::new("sql_editor");
-
-                    // First layer: Regular text editor (invisible text)
-                    let response = ui.add_sized(
-                        [ui.available_width(), height - 30.0], // Leave space for status
-                        egui::TextEdit::multiline(&mut self.query)
-                            .font(egui::FontId::monospace(14.0))
-                            .background_color(egui::Color32::TRANSPARENT)
-                            .text_color(egui::Color32::TRANSPARENT) // Make text invisible
-                            .margin(Margin::same(8))
-                            .id(text_edit_id),
+                    
+                    // Get the available area for the editor
+                    let available_rect = ui.available_rect_before_wrap();
+                    let editor_rect = egui::Rect::from_min_size(
+                        available_rect.min,
+                        egui::Vec2::new(available_rect.width(), height - 30.0)
                     );
+
+                    // First, paint the syntax highlighted text as background
+                    self.paint_syntax_highlighted_text(ui.painter(), editor_rect);
+
+                    // Then overlay the transparent text editor for input handling
+                  let response = ui.scope_builder(egui::UiBuilder::new().max_rect(editor_rect), |ui| {
+                        ui.add_sized(
+                            [editor_rect.width() - 16.0, editor_rect.height() - 16.0],
+                            egui::TextEdit::multiline(&mut self.query)
+                                .font(egui::FontId::monospace(13.0))
+                                .background_color(egui::Color32::TRANSPARENT)
+                                .text_color(egui::Color32::TRANSPARENT) // Keep text invisible
+                                .margin(Margin::same(8))
+                                .id(text_edit_id),
+                        )
+                    }).inner;
 
                     // Store the text editor's rect for cursor positioning
                     self.text_edit_rect = Some(response.rect);
-
-                    // Second layer: Render highlighted text overlay
-                    let painter = ui.painter();
-                    self.paint_syntax_highlighted_text(&painter, response.rect);
 
                     // Handle interactions
                     if response.has_focus() {
@@ -840,57 +856,140 @@ impl SqlEditor {
                         }
                     });
 
-                    // Status bar at bottom
-                    self.show_editor_status(ui);
+                    // Status bar at bottom (optional, can be removed if not needed)
+                    if height > 50.0 {
+                        self.show_editor_status(ui);
+                    }
                 });
             });
     }
 
     fn paint_syntax_highlighted_text(&self, painter: &egui::Painter, rect: egui::Rect) {
         if self.query.is_empty() {
+            // Show placeholder text when empty
+            painter.text(
+                egui::Pos2::new(rect.left() + 8.0, rect.top() + 8.0),
+                egui::Align2::LEFT_TOP,
+                "-- Enter your SQL query here",
+                egui::FontId::monospace(13.0),
+                egui::Color32::from_rgb(100, 100, 100),
+            );
             return;
         }
 
-        let font_id = egui::FontId::monospace(14.0);
-        let line_height = 18.0;
-        let char_width = 8.4;
+        let font_id = egui::FontId::monospace(13.0);
+        let line_height = 17.0;
+        let char_width = 7.8;
 
         let lines: Vec<&str> = self.query.lines().collect();
 
         for (line_idx, line) in lines.iter().enumerate() {
             let y_pos = rect.top() + 8.0 + (line_idx as f32 * line_height);
-            let mut x_pos = rect.left() + 8.0;
-
-            // Tokenize this line
-            let words: Vec<&str> = line.split_whitespace().collect();
-            let mut char_offset = 0;
-
-            for word in words {
-                // Find the actual position of this word in the line
-                if let Some(word_start) = line[char_offset..].find(word) {
-                    char_offset += word_start;
-                    x_pos = rect.left() + 8.0 + (char_offset as f32 * char_width);
-                }
-
-                let color = self.get_token_color(word);
-
-                painter.text(
-                    egui::Pos2::new(x_pos, y_pos),
-                    egui::Align2::LEFT_TOP,
-                    word,
-                    font_id.clone(),
-                    color,
-                );
-
-                char_offset += word.len();
-                // Skip to next word position (including spaces)
-                while char_offset < line.len() && line.chars().nth(char_offset) == Some(' ') {
-                    char_offset += 1;
-                }
+            
+            if line.trim().is_empty() {
+                continue; // Skip empty lines
             }
+
+            // Parse the line for syntax highlighting
+            self.paint_line_with_syntax(painter, line, rect.left() + 8.0, y_pos, &font_id, char_width);
         }
     }
 
+    fn paint_line_with_syntax(&self, painter: &egui::Painter, line: &str, start_x: f32, y_pos: f32, font_id: &egui::FontId, char_width: f32) {
+        // Handle comments first (they override everything else)
+        if let Some(comment_start) = line.find("--") {
+            // Paint everything before the comment normally
+            let before_comment = &line[..comment_start];
+            if !before_comment.trim().is_empty() {
+                let _x_pos = self.paint_tokens(painter, before_comment, start_x, y_pos, font_id, char_width);
+            }
+            
+            // Paint the comment
+            let comment = &line[comment_start..];
+            let comment_x = start_x + (comment_start as f32 * char_width);
+            painter.text(
+                egui::Pos2::new(comment_x, y_pos),
+                egui::Align2::LEFT_TOP,
+                comment,
+                font_id.clone(),
+                egui::Color32::from_rgb(106, 153, 85), // Green for comments
+            );
+            return;
+        }
+
+        // Paint tokens normally
+        self.paint_tokens(painter, line, start_x, y_pos, font_id, char_width);
+    }
+
+        fn paint_tokens(&self, painter: &egui::Painter, text: &str, start_x: f32, y_pos: f32, font_id: &egui::FontId, char_width: f32) -> f32 {
+        let mut x_pos = start_x;
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        
+        while i < chars.len() {
+            let start_i = i;
+            
+            // Skip whitespace
+            while i < chars.len() && chars[i].is_whitespace() {
+                i += 1;
+            }
+            
+            if i > start_i {
+                let whitespace: String = chars[start_i..i].iter().collect();
+                x_pos += whitespace.len() as f32 * char_width;
+            }
+            
+            if i >= chars.len() {
+                break;
+            }
+            
+            // Collect word/token
+            let word_start = i;
+            
+            if chars[i] == '\'' || chars[i] == '"' {
+                // Handle string literals
+                let quote = chars[i];
+                i += 1;
+                while i < chars.len() && chars[i] != quote {
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1; // Include closing quote
+                }
+            } else if chars[i].is_alphanumeric() || chars[i] == '_' {
+                // Handle identifiers/keywords
+                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                    i += 1;
+                }
+            } else if chars[i].is_numeric() || (chars[i] == '.' && i + 1 < chars.len() && chars[i + 1].is_numeric()) {
+                // Handle numbers
+                while i < chars.len() && (chars[i].is_numeric() || chars[i] == '.') {
+                    i += 1;
+                }
+            } else {
+                // Handle operators and punctuation
+                i += 1;
+            }
+            
+            let token: String = chars[word_start..i].iter().collect();
+            if !token.is_empty() {
+                let color = self.get_token_color(&token);
+                
+                painter.text(
+                    egui::Pos2::new(x_pos, y_pos),
+                    egui::Align2::LEFT_TOP,
+                    &token,
+                    font_id.clone(),
+                    color,
+                );
+                
+                x_pos += token.len() as f32 * char_width;
+            }
+        }
+        
+        x_pos
+    }
+    
     fn get_token_color(&self, word: &str) -> egui::Color32 {
         let clean_word = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
         let upper_word = clean_word.to_uppercase();
