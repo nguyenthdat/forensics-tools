@@ -94,11 +94,17 @@ egui_extras = { version = "0.32.0", features = [
     "svg_text",
     "syntect",
 ] }
+epaint = { version = "0.32.0", features = ["serde"] }
+
 rfd = { version = "0.15.4", features = [
     "tokio",
     "common-controls-v6",
     "file-handle-inner",
 ] }
+
+sqlparser = "0.58.0"
+syntect = "5.2.0"
+unicode-segmentation = "1.12.0"
 
 polars-ops = { version = "0.50" }
 polars-utils = { version = "0.50" }

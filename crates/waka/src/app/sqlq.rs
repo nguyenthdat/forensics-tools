@@ -1,3 +1,4 @@
+use eframe::egui::ComboBox;
 use eframe::{egui, egui::Frame};
 use epaint::{CornerRadius, Margin};
 use polars_sql::keywords::{all_functions, all_keywords};
@@ -22,14 +23,23 @@ pub struct SqlEditor {
     limit: i32,
     show_history: bool,
     editor_height_ratio: f32,
+    // New fields for the modern interface
+    search_column: String,
+    search_query: String,
+    rows_per_page: usize,
+    current_page: usize,
+    show_borders: bool,
+    wrap_rows: bool,
+    execution_time: String,
+    row_count: usize,
 }
 
 impl SqlEditor {
     pub fn new() -> Self {
         Self {
-            query: String::new(),
+            query: "SELECT * FROM data\nLIMIT 1000".to_string(),
             result: String::new(),
-            show_result: false,
+            show_result: true,
             suggestions: Vec::new(),
             show_suggestions: false,
             selected_suggestion: 0,
@@ -40,35 +50,41 @@ impl SqlEditor {
             current_word: String::new(),
             text_edit_rect: None,
             syntax_error: None,
-            limit: 100,
+            limit: 1000,
             show_history: false,
-            editor_height_ratio: 0.6,
+            editor_height_ratio: 0.35, // Smaller editor like in image
+            search_column: "altnameid".to_string(),
+            search_query: String::new(),
+            rows_per_page: 10,
+            current_page: 1,
+            show_borders: true,
+            wrap_rows: false,
+            execution_time: "69ms".to_string(),
+            row_count: 1000,
         }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        // Main container with dark background
+        // Main container with VS Code dark theme
         Frame::new()
-            .fill(egui::Color32::from_rgb(30, 30, 30))
+            .fill(egui::Color32::from_rgb(37, 37, 38)) // VS Code background
             .show(ui, |ui| {
                 ui.vertical(|ui| {
-                    // Top toolbar
-                    self.show_toolbar(ui);
+                    // Header section
+                    self.show_header(ui);
 
-                    // Calculate available space for resizable content
-                    let available_rect = ui.available_rect_before_wrap();
-                    let total_height = available_rect.height();
+                    // SQL Editor area
+                    self.show_sql_editor_section(ui);
 
-                    // Editor area with resizable height
-                    let editor_height = total_height * self.editor_height_ratio;
-                    self.show_main_editor_area(ui, editor_height);
+                    // Query controls
+                    self.show_query_controls(ui);
 
-                    // Horizontal separator/splitter
-                    self.show_resize_separator(ui);
+                    // Execution status
+                    self.show_execution_status(ui);
 
-                    // Results area (remaining space)
+                    // Results area
                     if self.show_result {
-                        self.show_results_area(ui);
+                        self.show_results_section(ui);
                     }
 
                     // Show syntax error if any
@@ -81,6 +97,345 @@ impl SqlEditor {
                 });
             });
     }
+
+    fn show_header(&mut self, ui: &mut egui::Ui) {
+        Frame::new()
+            .fill(egui::Color32::from_rgb(45, 45, 45))
+            .inner_margin(Margin::symmetric(0, 12))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Top section with title and close button
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        
+                        // Collapsible arrow and title
+                        ui.label(
+                            egui::RichText::new("▼ Run a Polars SQL query")
+                                .color(egui::Color32::WHITE)
+                                .size(14.0)
+                                .strong()
+                        );
+                        
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(16.0);
+                            if ui.button("✕").clicked() {
+                                // Handle close
+                            }
+                        });
+                    });
+                    
+                    ui.add_space(8.0);
+                    
+                    // Instructions with bullet points
+                    let instructions = [
+                        "Run a Polars SQL query on your data using qsv sqlp.",
+                        "Refer to your file as a table named _t_1.",
+                        "Save SQL query output to a file using qsv sqlp or qsv to or to the clipboard using qsv clipboard.",
+                        "Important note: Decimal values may be truncated and very large SQL query outputs can cause issues.",
+                    ];
+                    
+                    for instruction in instructions {
+                        ui.horizontal(|ui| {
+                            ui.add_space(16.0);
+                            ui.label(
+                                egui::RichText::new(format!("• {}", instruction))
+                                    .color(egui::Color32::from_rgb(200, 200, 200))
+                                    .size(12.0)
+                            );
+                        });
+                    }
+                    
+                    ui.add_space(12.0);
+                    
+                    // Query input label
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.label(
+                            egui::RichText::new("Enter your Polars SQL query:")
+                                .color(egui::Color32::WHITE)
+                                .size(13.0)
+                                .strong()
+                        );
+                    });
+                });
+            });
+    }
+
+    fn show_sql_editor_section(&mut self, ui: &mut egui::Ui) {
+        let available_height = ui.available_height();
+        let editor_height = available_height * self.editor_height_ratio;
+        
+        Frame::new()
+            .fill(egui::Color32::from_rgb(30, 30, 30))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(Margin::symmetric(16, 8))
+            .show(ui, |ui| {
+                let response = ui.add_sized(
+                    [ui.available_width(), editor_height - 32.0],
+                    egui::TextEdit::multiline(&mut self.query)
+                        .font(egui::FontId::monospace(13.0))
+                        .background_color(egui::Color32::TRANSPARENT)
+                        .text_color(egui::Color32::from_rgb(220, 220, 220))
+                        .margin(Margin::same(12))
+                );
+                
+                if response.changed() {
+                    self.validate_syntax();
+                    self.update_suggestions();
+                }
+                
+                if response.has_focus() {
+                    self.update_cursor_position();
+                }
+                
+                self.text_edit_rect = Some(response.rect);
+            });
+    }
+
+    fn show_query_controls(&mut self, ui: &mut egui::Ui) {
+        Frame::new()
+            .fill(egui::Color32::from_rgb(40, 40, 40))
+            .inner_margin(Margin::symmetric(16, 8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Run SQL query button
+                    let run_button = egui::Button::new(
+                        egui::RichText::new("🛠 Run SQL query")
+                            .color(egui::Color32::WHITE)
+                            .size(13.0)
+                    )
+                    .fill(egui::Color32::from_rgb(0, 120, 215)) // VS Code blue
+                    .corner_radius(CornerRadius::same(4));
+                    
+                    if ui.add(run_button).clicked() {
+                        self.execute_query();
+                    }
+                    
+                    ui.add_space(16.0);
+                    
+                    // Decrease/Increase code size buttons
+                    if ui.button("🔍-").on_hover_text("Decrease code size").clicked() {
+                        // Font size decrease logic will be added later
+                    }
+                    
+                    if ui.button("🔍+").on_hover_text("Increase code size").clicked() {
+                        // Font size increase logic will be added later
+                    }
+                    
+                    ui.add_space(16.0);
+                    
+                    // Inference length
+                    ui.label(
+                        egui::RichText::new("Inference length:")
+                            .color(egui::Color32::WHITE)
+                            .size(12.0)
+                    );
+                    
+                    ui.add(
+                        egui::DragValue::new(&mut self.limit)
+                            .range(1..=10000)
+                            .speed(10)
+                    );
+                });
+            });
+    }
+
+     fn show_execution_status(&mut self, ui: &mut egui::Ui) {
+        Frame::new()
+            .fill(egui::Color32::from_rgb(50, 50, 50))
+            .inner_margin(Margin::symmetric(16, 4))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "Recent Polars SQL query's estimated elapsed time: {} | Row count: {}",
+                            self.execution_time, self.row_count
+                        ))
+                        .color(egui::Color32::from_rgb(180, 180, 180))
+                        .size(11.0)
+                    );
+                });
+            });
+    }
+
+        fn show_results_section(&mut self, ui: &mut egui::Ui) {
+        Frame::new()
+            .fill(egui::Color32::from_rgb(37, 37, 38))
+            .inner_margin(Margin::symmetric(16, 8))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Table controls
+                    self.show_table_controls(ui);
+                    
+                    // Search controls
+                    self.show_search_controls(ui);
+                    
+                    // Results content placeholder
+                    self.show_results_placeholder(ui);
+                    
+                    // Pagination
+                    self.show_pagination(ui);
+                });
+            });
+    }
+
+    fn show_table_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            // Export data button
+            let export_button = egui::Button::new(
+                egui::RichText::new("📤 Export data")
+                    .color(egui::Color32::WHITE)
+                    .size(12.0)
+            )
+            .fill(egui::Color32::from_rgb(0, 120, 215))
+            .corner_radius(CornerRadius::same(4));
+            
+            if ui.add(export_button).clicked() {
+                // Handle export - will be implemented when CSV loading is added
+            }
+            
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Show/Hide Columns dropdown
+                egui::ComboBox::from_label("Show/Hide Columns")
+                    .selected_text("Show/Hide Columns")
+                    .show_ui(ui, |ui| {
+                        // Placeholder for column headers - will be populated from CSV
+                        ui.label("Column headers will be loaded from CSV");
+                    });
+                
+                ui.add_space(16.0);
+                
+                // Borders toggle
+                ui.checkbox(&mut self.show_borders, "Borders");
+                
+                ui.add_space(8.0);
+                
+                // Wrap Rows toggle
+                ui.checkbox(&mut self.wrap_rows, "Wrap Rows");
+            });
+        });
+        
+        ui.add_space(8.0);
+    }
+
+    fn show_search_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Search column:")
+                    .color(egui::Color32::WHITE)
+                    .size(12.0)
+            );
+            
+            ComboBox::from_id_salt("search_column")
+                .selected_text(&self.search_column)
+                .show_ui(ui, |ui| {
+                    // Placeholder - will be populated from CSV headers
+                    ui.selectable_value(&mut self.search_column, "altnameid".to_string(), "altnameid");
+                });
+            
+            ui.add_space(8.0);
+            
+            ui.add(
+                egui::TextEdit::singleline(&mut self.search_query)
+                    .hint_text("Search query for altnameid...")
+                    .desired_width(200.0)
+            );
+        });
+        
+        ui.add_space(12.0);
+    }
+
+    fn show_results_placeholder(&mut self, ui: &mut egui::Ui) {
+        // Placeholder for results table - will be replaced with actual table when CSV is loaded
+        Frame::new()
+            .fill(egui::Color32::from_rgb(45, 45, 45))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(Margin::same(8))
+            .show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(60.0);
+                    ui.label(
+                        egui::RichText::new("📊 Results will appear here")
+                            .color(egui::Color32::from_rgb(150, 150, 150))
+                            .size(14.0)
+                    );
+                    ui.label(
+                        egui::RichText::new("Run a query to see the data table")
+                            .color(egui::Color32::from_rgb(120, 120, 120))
+                            .size(12.0)
+                    );
+                    ui.add_space(60.0);
+                });
+            });
+    }
+
+    fn show_pagination(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+        
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Rows per page")
+                    .color(egui::Color32::WHITE)
+                    .size(12.0)
+            );
+            
+            ComboBox::from_id_salt("rows_per_page")
+                .selected_text(format!("{}", self.rows_per_page))
+                .show_ui(ui, |ui| {
+                    for &count in &[10, 25, 50, 100] {
+                        ui.selectable_value(&mut self.rows_per_page, count, format!("{}", count));
+                    }
+                });
+            
+            ui.add_space(16.0);
+            
+            ui.label(
+                egui::RichText::new("Page 1 of 100")
+                    .color(egui::Color32::from_rgb(180, 180, 180))
+                    .size(12.0)
+            );
+            
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Pagination controls
+                if ui.button("»").clicked() {
+                    // Last page
+                }
+                
+                if ui.button("›").clicked() {
+                    self.current_page += 1;
+                }
+                
+                ui.add(
+                    egui::DragValue::new(&mut self.current_page)
+                        .range(1..=100)
+                        .speed(1)
+                );
+                
+                if ui.button("‹").clicked() && self.current_page > 1 {
+                    self.current_page -= 1;
+                }
+                
+                if ui.button("«").clicked() {
+                    self.current_page = 1;
+                }
+            });
+        });
+        
+        ui.add_space(8.0);
+        
+        // Footer note
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Percentages and decimal values may be estimations. Data with large content may be truncated with ellipsis.")
+                    .color(egui::Color32::from_rgb(150, 150, 150))
+                    .size(10.0)
+                    .italics()
+            );
+        });
+    }
+
 
     fn show_toolbar(&mut self, ui: &mut egui::Ui) {
         Frame::new()

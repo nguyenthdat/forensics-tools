@@ -10,8 +10,17 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 eframe = { workspace = true, features = ["persistence", "serde", "wgpu"] }
-epaint = { version = "0.32.0", features = ["serde"] }
-polars-sql = { workspace = true, features = ["csv", "json", "serde", "parquet", "timezones", "binary_encoding", "dtype-decimal"] }
-sqlparser = "0.58.0"
-syntect = "5.2.0"
-unicode-segmentation = "1.12.0"
+epaint = { workspace = true, features = ["serde"] }
+polars-sql = { workspace = true, features = [
+    "csv",
+    "json",
+    "serde",
+    "parquet",
+    "timezones",
+    "binary_encoding",
+    "dtype-decimal",
+] }
+sqlparser = { workspace = true }
+syntect = { workspace = true }
+unicode-segmentation = { workspace = true }
+# qsv = { workspace = true }
