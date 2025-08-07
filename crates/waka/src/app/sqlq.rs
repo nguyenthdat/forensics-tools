@@ -35,8 +35,8 @@ impl SqlEditor {
             selected_suggestion: 0,
             cursor_row: 1,
             cursor_col: 1,
-            sql_keywords: all_functions(),
-            sql_functions: all_keywords(),
+            sql_keywords: all_keywords(),
+            sql_functions: all_functions(),
             current_word: String::new(),
             text_edit_rect: None,
             syntax_error: None,
@@ -187,10 +187,30 @@ impl SqlEditor {
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 60)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    // Line numbers
-                    self.show_line_numbers(ui, height);
+                    // Calculate line number width dynamically
+                    let line_count = self.query.lines().count().max(1);
+                    let max_line_number = line_count.max(20);
+                    let digits = if max_line_number < 10 {
+                        1
+                    } else if max_line_number < 100 {
+                        2
+                    } else {
+                        3
+                    };
+                    let char_width = 8.0;
+                    let padding = 16.0;
+                    let line_number_width = (digits as f32 * char_width) + padding;
 
-                    // Editor with syntax highlighting overlay
+                    // Line numbers with calculated width
+                    ui.allocate_ui_with_layout(
+                        egui::Vec2::new(line_number_width, height),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            self.show_line_numbers(ui, height);
+                        },
+                    );
+
+                    // Editor with remaining width
                     self.show_highlighted_editor(ui, height);
                 });
             });
@@ -347,20 +367,58 @@ impl SqlEditor {
     fn show_line_numbers(&self, ui: &mut egui::Ui, height: f32) {
         let line_count = self.query.lines().count().max(1);
 
+        // Calculate how many lines can fit in the given height
+        let line_height = 18.0; // Should match the line height in paint_syntax_highlighted_text
+        let top_padding = 8.0;
+        let available_height_for_lines = height - top_padding - 10.0; // Leave some bottom padding
+        let max_visible_lines = (available_height_for_lines / line_height).floor() as usize;
+        let lines_to_show = line_count.min(max_visible_lines).max(1);
+
+        // Calculate the width needed based on the maximum line number
+        let max_line_number = line_count.max(20); // Show at least 20 line numbers for consistency
+        let digits = if max_line_number < 10 {
+            1
+        } else if max_line_number < 100 {
+            2
+        } else {
+            3
+        };
+        let char_width = 8.0; // Approximate width of a monospace character
+        let padding = 16.0; // Left and right padding
+        let calculated_width = (digits as f32 * char_width) + padding;
+
         Frame::new()
             .fill(egui::Color32::from_rgb(50, 50, 50))
             .show(ui, |ui| {
                 ui.allocate_ui_with_layout(
-                    egui::Vec2::new(50.0, height),
+                    egui::Vec2::new(calculated_width, height),
                     egui::Layout::top_down(egui::Align::RIGHT),
                     |ui| {
-                        ui.add_space(8.0);
-                        for line_num in 1..=line_count.max(20) {
+                        ui.add_space(top_padding);
+
+                        // Show line numbers that fit in the available space
+                        for line_num in 1..=lines_to_show {
+                            let line_color = if line_num <= line_count {
+                                egui::Color32::from_rgb(130, 130, 130) // Normal line numbers
+                            } else {
+                                egui::Color32::from_rgb(80, 80, 80) // Dimmed for empty lines
+                            };
+
                             ui.label(
-                                egui::RichText::new(format!("{:2}", line_num))
-                                    .color(egui::Color32::from_rgb(130, 130, 130))
+                                egui::RichText::new(format!("{:width$}", line_num, width = digits))
+                                    .color(line_color)
                                     .size(12.0)
                                     .family(egui::FontFamily::Monospace),
+                            );
+                        }
+
+                        // If there are more lines than can be displayed, show an indicator
+                        if line_count > max_visible_lines {
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new("⋮")
+                                    .color(egui::Color32::from_rgb(100, 100, 100))
+                                    .size(14.0),
                             );
                         }
                     },
