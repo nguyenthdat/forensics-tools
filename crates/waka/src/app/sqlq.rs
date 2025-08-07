@@ -22,6 +22,10 @@ pub struct SqlEditor {
     syntax_error: Option<String>,
     limit: i32,
     editor_height_ratio: f32,
+    // Error tracking fields
+    error_line: Option<usize>,
+    error_column: Option<usize>,
+    error_length: Option<usize>,
     // New fields for the modern interface
     search_column: String,
     search_query: String,
@@ -32,6 +36,7 @@ pub struct SqlEditor {
     execution_time: String,
     row_count: usize,
 }
+
 
 impl SqlEditor {
     pub fn new() -> Self {
@@ -49,6 +54,9 @@ impl SqlEditor {
             current_word: String::new(),
             text_edit_rect: None,
             syntax_error: None,
+            error_line: None,
+            error_column: None,
+            error_length: None,
             limit: 1000,
             editor_height_ratio: 0.35,
             search_column: "altnameid".to_string(),
@@ -84,9 +92,6 @@ impl SqlEditor {
                     if self.show_result {
                         self.show_results_section(ui);
                     }
-
-                    // Show syntax error if any
-                    self.show_syntax_error(ui);
 
                     // Suggestions popup (overlay)
                     if self.show_suggestions && !self.suggestions.is_empty() {
@@ -436,7 +441,7 @@ impl SqlEditor {
                     self.paint_syntax_highlighted_text(ui.painter(), editor_rect);
 
                     // Then overlay the transparent text editor for input handling
-                  let response = ui.scope_builder(egui::UiBuilder::new().max_rect(editor_rect), |ui| {
+                    let response = ui.scope_builder(egui::UiBuilder::new().max_rect(editor_rect), |ui| {
                         ui.add_sized(
                             [editor_rect.width() - 16.0, editor_rect.height() - 16.0],
                             egui::TextEdit::multiline(&mut self.query)
@@ -450,6 +455,9 @@ impl SqlEditor {
 
                     // Store the text editor's rect for cursor positioning
                     self.text_edit_rect = Some(response.rect);
+
+                    // Check for hover over error area and show tooltip
+                    self.handle_error_hover(ui, &response);
 
                     // Handle interactions
                     if response.has_focus() {
@@ -484,12 +492,66 @@ impl SqlEditor {
                         }
                     });
 
-                    // Status bar at bottom (optional, can be removed if not needed)
+                    // Status bar at bottom
                     if height > 50.0 {
                         self.show_editor_status(ui);
                     }
                 });
             });
+    }
+
+    fn handle_error_hover(&self, ui: &mut egui::Ui, response: &egui::Response) {
+        if let (Some(error_msg), Some(error_line), Some(error_col), Some(error_len)) = 
+            (&self.syntax_error, self.error_line, self.error_column, self.error_length) {
+            
+            if response.hovered() {
+                let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+                
+                // Calculate if hover is over the error area
+                if let Some(rect) = self.text_edit_rect {
+                    let line_height = 17.0;
+                    let char_width = 7.8;
+                    
+                    let error_y = rect.top() + 8.0 + ((error_line - 1) as f32 * line_height);
+                    let error_x_start = rect.left() + 8.0 + ((error_col - 1) as f32 * char_width);
+                    let error_x_end = error_x_start + (error_len as f32 * char_width);
+                    
+                    // Check if mouse is hovering over error area
+                    if hover_pos.x >= error_x_start && hover_pos.x <= error_x_end &&
+                       hover_pos.y >= error_y && hover_pos.y <= error_y + line_height {
+                        
+                        // Show error tooltip
+                        egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(),egui::Id::new("sql_error_tooltip"), |ui| {
+                            ui.set_max_width(300.0);
+                            Frame::new()
+                                .fill(egui::Color32::from_rgb(80, 40, 40))
+                                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 80, 80)))
+                                .corner_radius(CornerRadius::same(4))
+                                .inner_margin(Margin::same(8))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("❌");
+                                        ui.vertical(|ui| {
+                                            ui.label(
+                                                egui::RichText::new("Syntax Error:")
+                                                    .color(egui::Color32::from_rgb(255, 200, 200))
+                                                    .size(12.0)
+                                                    .strong(),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(error_msg)
+                                                    .color(egui::Color32::from_rgb(255, 220, 220))
+                                                    .size(11.0)
+                                                    .family(egui::FontFamily::Monospace),
+                                            );
+                                        });
+                                    });
+                                });
+                        });
+                    }
+                }
+            }
+        }
     }
 
     fn paint_syntax_highlighted_text(&self, painter: &egui::Painter, rect: egui::Rect) {
@@ -506,7 +568,7 @@ impl SqlEditor {
         }
 
         let font_id = egui::FontId::monospace(13.0);
-        let line_height = 17.0; // Match the line height in show_line_numbers
+        let line_height = 17.0;
         let char_width = 7.8;
 
         // Split by lines, but include empty lines
@@ -515,13 +577,49 @@ impl SqlEditor {
         for (line_idx, line) in lines.iter().enumerate() {
             let y_pos = rect.top() + 8.0 + (line_idx as f32 * line_height);
             
-            // For empty lines, just skip painting (but still count the line)
-            if line.is_empty() {
-                continue;
+            // Paint the line content
+            if !line.is_empty() {
+                self.paint_line_with_syntax(painter, line, rect.left() + 8.0, y_pos, &font_id, char_width);
             }
 
-            // Parse the line for syntax highlighting
-            self.paint_line_with_syntax(painter, line, rect.left() + 8.0, y_pos, &font_id, char_width);
+            // Paint error underline if this line has an error
+            if let (Some(error_line), Some(error_col), Some(error_len)) = 
+                (self.error_line, self.error_column, self.error_length) {
+                if line_idx + 1 == error_line { // Convert to 1-based line number
+                    let start_x = rect.left() + 8.0 + ((error_col - 1) as f32 * char_width);
+                    let end_x = start_x + (error_len as f32 * char_width);
+                    let underline_y = y_pos + 14.0; // Position underline below text
+                    
+                    // Draw wavy red underline
+                    self.paint_error_underline(painter, start_x, end_x, underline_y);
+                }
+            }
+        }
+    }
+
+    fn paint_error_underline(&self, painter: &egui::Painter, start_x: f32, end_x: f32, y: f32) {
+        let color = egui::Color32::from_rgb(220, 80, 80);
+        let stroke = egui::Stroke::new(1.5, color);
+        
+        // Draw a wavy line
+        let wave_width = 4.0;
+        let wave_height = 2.0;
+        let mut x = start_x;
+        
+        while x < end_x - wave_width {
+            let next_x = (x + wave_width).min(end_x);
+            
+            // Create a simple wave pattern
+            painter.line_segment(
+                [egui::Pos2::new(x, y), egui::Pos2::new(x + wave_width / 2.0, y - wave_height)],
+                stroke,
+            );
+            painter.line_segment(
+                [egui::Pos2::new(x + wave_width / 2.0, y - wave_height), egui::Pos2::new(next_x, y)],
+                stroke,
+            );
+            
+            x = next_x;
         }
     }
 
@@ -645,7 +743,6 @@ impl SqlEditor {
 
     fn show_editor_status(&self, ui: &mut egui::Ui) {
         Frame::new()
-            .fill(egui::Color32::from_rgb(50, 50, 50))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
@@ -674,50 +771,76 @@ impl SqlEditor {
                 });
             });
     }
-
-    fn show_syntax_error(&self, ui: &mut egui::Ui) {
-        if let Some(error) = &self.syntax_error {
-            Frame::new()
-                .fill(egui::Color32::from_rgb(80, 40, 40))
-                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 80, 80)))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        ui.label("❌");
-                        ui.vertical(|ui| {
-                            ui.label(
-                                egui::RichText::new("Syntax Error:")
-                                    .color(egui::Color32::from_rgb(220, 80, 80))
-                                    .size(12.0)
-                                    .strong(),
-                            );
-                            ui.label(
-                                egui::RichText::new(error)
-                                    .color(egui::Color32::from_rgb(255, 200, 200))
-                                    .size(11.0)
-                                    .family(egui::FontFamily::Monospace),
-                            );
-                        });
-                    });
-                });
-        }
-    }
-
+ 
     fn validate_syntax(&mut self) {
         if self.query.trim().is_empty() {
             self.syntax_error = None;
+            self.error_line = None;
+            self.error_column = None;
+            self.error_length = None;
             return;
         }
 
         match self.parse_sql(&self.query) {
-            Ok(_) => self.syntax_error = None,
+            Ok(_) => {
+                self.syntax_error = None;
+                self.error_line = None;
+                self.error_column = None;
+                self.error_length = None;
+            }
             Err(error) => {
                 let clean_error = error
                     .replace("sql parser error: ", "")
                     .chars()
-                    .take(100)
+                    .take(200)
                     .collect::<String>();
-                self.syntax_error = Some(clean_error);
+                
+                self.syntax_error = Some(clean_error.clone());
+                
+                // Try to extract line and column information from the error
+                self.extract_error_position(&error);
+            }
+        }
+    }
+
+    fn extract_error_position(&mut self, error: &str) {
+        // Try to parse error position from common SQL error formats
+        // This is a simplified parser - real SQL parsers may have different formats
+        
+        // Look for patterns like "at line 1 column 5" or "Line: 1, Column: 5"
+        if let Some(captures) = regex::Regex::new(r"(?i)line[:\s]*(\d+).*column[:\s]*(\d+)")
+            .unwrap()
+            .captures(error) {
+            if let (Ok(line), Ok(col)) = (captures[1].parse::<usize>(), captures[2].parse::<usize>()) {
+                self.error_line = Some(line);
+                self.error_column = Some(col);
+                self.error_length = Some(5); // Default error length
+                return;
+            }
+        }
+        
+        // If we can't parse the exact position, try to guess based on common errors
+        if error.to_lowercase().contains("unexpected") {
+            // Try to find the last word in the query as a rough estimate
+            let lines: Vec<&str> = self.query.split('\n').collect();
+            for (line_idx, line) in lines.iter().enumerate() {
+                if let Some(last_word_start) = line.rfind(char::is_whitespace) {
+                    self.error_line = Some(line_idx + 1);
+                    self.error_column = Some(last_word_start + 2);
+                    self.error_length = Some(line.len() - last_word_start - 1);
+                    return;
+                }
+            }
+        }
+        
+        // Default fallback - highlight the last non-empty line
+        let lines: Vec<&str> = self.query.split('\n').collect();
+        for (line_idx, line) in lines.iter().enumerate().rev() {
+            if !line.trim().is_empty() {
+                self.error_line = Some(line_idx + 1);
+                self.error_column = Some(1);
+                self.error_length = Some(line.len().max(1));
+                break;
             }
         }
     }

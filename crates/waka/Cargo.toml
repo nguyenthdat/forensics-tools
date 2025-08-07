@@ -27,3 +27,4 @@ qsv = { workspace = true, default-features = false, features = [
     "distrib_features",
     "polars",
 ] }
+regex = "1.11.1"
