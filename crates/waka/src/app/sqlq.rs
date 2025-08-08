@@ -1,19 +1,14 @@
-use std::path::PathBuf;
 use eframe::egui::ComboBox;
 use eframe::{egui, egui::Frame};
 use epaint::{CornerRadius, Margin, StrokeKind};
 use polars_sql::keywords::{all_functions, all_keywords};
-use qsv::config::Config;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+use std::path::PathBuf;
+use ustr::Ustr;
 
-struct FilePreview {
-    file_path: String,
-    headers: Vec<String>,
-    preview_rows: Vec<Vec<String>>,
-    load_error: Option<String>,
-}
+use crate::app::table::DataTableArea;
 
 pub struct SqlEditor {
     query: String,
@@ -45,8 +40,7 @@ pub struct SqlEditor {
     execution_time: String,
     row_count: usize,
 
-     files: Vec<FilePreview>,
-    current_file: usize, // index into files
+    data_table: DataTableArea,
 }
 
 impl SqlEditor {
@@ -78,15 +72,15 @@ impl SqlEditor {
             wrap_rows: false,
             execution_time: "69ms".to_string(),
             row_count: 1000,
-            
-            files: Vec::new(),
-            current_file: 0,
+
+            data_table: DataTableArea::default(),
         }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
         // Main container with VS Code dark theme
-        self.handle_file_drop(ui.ctx());
+        self.data_table.handle_file_drop(ui.ctx());
+
         Frame::new()
             .fill(egui::Color32::from_rgb(37, 37, 38)) // VS Code background
             .show(ui, |ui| {
@@ -178,78 +172,6 @@ impl SqlEditor {
                 });
             });
     }
-
-    fn handle_file_drop(&mut self, ctx: &egui::Context) {
-        // Accept multiple files now
-        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if dropped.is_empty() {
-            return;
-        }
-        for f in dropped {
-            if let Some(path) = f.path {
-                self.load_preview(path);
-            }
-        }
-    }
-
-
-      fn load_preview(&mut self, path: PathBuf) {
-        let file_path = path.display().to_string();
-        // Avoid reloading same file
-        if self.files.iter().any(|fp| fp.file_path == file_path) {
-            // Switch to it
-            if let Some(idx) = self.files.iter().position(|fp| fp.file_path == file_path) {
-                self.current_file = idx;
-            }
-            return;
-        }
-
-        let mut fp = FilePreview {
-            file_path: file_path.clone(),
-            headers: Vec::new(),
-            preview_rows: Vec::new(),
-            load_error: None,
-        };
-
-        let cfg = Config::new(Some(&file_path));
-        match cfg.reader() {
-            Ok(mut rdr) => {
-                match rdr.headers() {
-                    Ok(hdrs) => {
-                        fp.headers = hdrs.iter().map(|s| s.to_string()).collect();
-                    }
-                    Err(e) => {
-                        fp.load_error = Some(format!("Cannot read headers: {e}"));
-                    }
-                }
-                if fp.load_error.is_none() {
-                    for rec_res in rdr.records().take(50) {
-                        match rec_res {
-                            Ok(rec) => {
-                                fp.preview_rows
-                                    .push(rec.iter().map(|s| s.to_string()).collect());
-                            }
-                            Err(e) => {
-                                fp.load_error = Some(format!("Row read error: {e}"));
-                                break;
-                            }
-                        }
-                    }
-                    if fp.preview_rows.is_empty() && fp.load_error.is_none() {
-                        fp.load_error = Some("No data rows found.".to_string());
-                    }
-                }
-            }
-            Err(e) => {
-                fp.load_error = Some(format!("Unable to open file: {e}"));
-            }
-        }
-
-        self.files.push(fp);
-        self.current_file = self.files.len() - 1;
-    }
-
-    
 
     fn show_sql_editor_section(&mut self, ui: &mut egui::Ui) {
         let available_height = ui.available_height();
@@ -346,6 +268,9 @@ impl SqlEditor {
             .inner_margin(Margin::symmetric(16, 8))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
+                    // File tabs
+                    self.data_table.show_file_tabs(ui);
+
                     // Table controls
                     self.show_table_controls(ui);
 
@@ -359,14 +284,6 @@ impl SqlEditor {
                     self.show_pagination(ui);
                 });
             });
-    }
-
-    fn current_fp(&self) -> Option<&FilePreview> {
-        self.files.get(self.current_file)
-    }
-
-    fn current_fp_mut(&mut self) -> Option<&mut FilePreview> {
-        self.files.get_mut(self.current_file)
     }
 
     fn show_table_controls(&mut self, ui: &mut egui::Ui) {
@@ -384,8 +301,9 @@ impl SqlEditor {
             }
 
             // File selector if multiple files
-            if !self.files.is_empty() {
+            if !self.data_table.files.is_empty() {
                 let cur_name = self
+                    .data_table
                     .current_fp()
                     .map(|f| f.file_path.as_str())
                     .unwrap_or("<none>");
@@ -393,12 +311,15 @@ impl SqlEditor {
                     .selected_text(format!("📂 {}", cur_name))
                     .width(220.0)
                     .show_ui(ui, |ui| {
-                        for (idx, fp) in self.files.iter().enumerate() {
+                        for (idx, fp) in self.data_table.files.iter().enumerate() {
                             if ui
-                                .selectable_label(idx == self.current_file, &fp.file_path)
+                                .selectable_label(
+                                    idx == self.data_table.current_file,
+                                    &*fp.file_path,
+                                )
                                 .clicked()
                             {
-                                self.current_file = idx;
+                                self.data_table.current_file = idx;
                             }
                         }
                     });
@@ -408,9 +329,9 @@ impl SqlEditor {
                 egui::ComboBox::from_label("Show/Hide Columns")
                     .selected_text("Show/Hide Columns")
                     .show_ui(ui, |ui| {
-                        if let Some(fp) = self.current_fp() {
+                        if let Some(fp) = self.data_table.current_fp() {
                             for h in &fp.headers {
-                                ui.label(h);
+                                ui.label(h.as_str());
                             }
                         } else {
                             ui.label("No file loaded");
@@ -435,7 +356,8 @@ impl SqlEditor {
                     .size(12.0),
             );
 
-            let headers: Vec<String> = self
+            let headers: Vec<Ustr> = self
+                .data_table
                 .current_fp()
                 .map(|fp| fp.headers.clone())
                 .unwrap_or_default();
@@ -447,7 +369,7 @@ impl SqlEditor {
                         ui.label("No headers");
                     } else {
                         for h in headers {
-                            ui.selectable_value(&mut self.search_column, h.clone(), h);
+                            ui.selectable_value(&mut self.search_column, h.to_string(), &*h);
                         }
                     }
                 });
@@ -465,9 +387,8 @@ impl SqlEditor {
         ui.add_space(12.0);
     }
 
-        fn show_results_placeholder(&mut self, ui: &mut egui::Ui) {
-        if self.files.is_empty() {
-            // ...existing drag & drop placeholder code unchanged...
+    fn show_results_placeholder(&mut self, ui: &mut egui::Ui) {
+        if self.data_table.files.is_empty() {
             // (Keep original block; omitted here for brevity)
             // BEGIN unchanged placeholder
             let (rect, _resp) = ui.allocate_exact_size(
@@ -514,7 +435,9 @@ impl SqlEditor {
         let mut reload_requested = false;
 
         {
-            let Some(fp) = self.current_fp() else { return };
+            let Some(fp) = self.data_table.current_fp() else {
+                return;
+            };
 
             if let Some(err) = &fp.load_error {
                 Frame::new()
@@ -555,8 +478,8 @@ impl SqlEditor {
                                 "🔎 Preview of {} (first {} rows)  •  File {}/{}",
                                 fp.file_path,
                                 fp.preview_rows.len(),
-                                self.current_file + 1,
-                                self.files.len()
+                                self.data_table.current_file + 1,
+                                self.data_table.files.len()
                             ))
                             .color(egui::Color32::WHITE)
                             .size(12.0)
@@ -569,68 +492,75 @@ impl SqlEditor {
                     ui.add_space(6.0);
 
                     egui::ScrollArea::both()
-                        .id_salt(format!("preview_table_scroll_{}", self.current_file))
+                        .id_salt(format!(
+                            "preview_table_scroll_{}",
+                            self.data_table.current_file
+                        ))
                         .auto_shrink([false; 2])
                         .show(ui, |ui| {
                             let total_min_width = (fp.headers.len().max(1) as f32) * 140.0;
                             ui.set_min_width(total_min_width);
 
-                            egui::Grid::new(format!("preview_header_grid_{}", self.current_file))
-                                .striped(true)
-                                .spacing(egui::vec2(12.0, 4.0))
-                                .show(ui, |ui| {
-                                    for h in &fp.headers {
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(h)
-                                                    .color(egui::Color32::from_rgb(190, 220, 255))
-                                                    .family(egui::FontFamily::Monospace)
-                                                    .size(12.0)
-                                                    .strong(),
-                                            )
-                                            .selectable(false),
-                                        );
+                            egui::Grid::new(format!(
+                                "preview_header_grid_{}",
+                                self.data_table.current_file
+                            ))
+                            .striped(true)
+                            .spacing(egui::vec2(12.0, 4.0))
+                            .show(ui, |ui| {
+                                for h in &fp.headers {
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(&**h)
+                                                .color(egui::Color32::from_rgb(190, 220, 255))
+                                                .family(egui::FontFamily::Monospace)
+                                                .size(12.0)
+                                                .strong(),
+                                        )
+                                        .selectable(false),
+                                    );
+                                }
+                                ui.end_row();
+
+                                for row in &fp.preview_rows {
+                                    for (idx, cell) in row.iter().enumerate() {
+                                        let truncated = if self.wrap_rows {
+                                            cell.clone()
+                                        } else {
+                                            let mut s: String = cell.chars().take(200).collect();
+                                            if cell.len() > 200 {
+                                                s.push('…');
+                                            }
+                                            Ustr::from(&s)
+                                        };
+                                        let color = if idx == 0 {
+                                            egui::Color32::from_rgb(220, 220, 220)
+                                        } else {
+                                            egui::Color32::from_rgb(200, 200, 200)
+                                        };
+                                        ui.add(egui::Label::new(
+                                            egui::RichText::new(truncated)
+                                                .color(color)
+                                                .family(egui::FontFamily::Monospace)
+                                                .size(11.0),
+                                        ));
                                     }
                                     ui.end_row();
-
-                                    for row in &fp.preview_rows {
-                                        for (idx, cell) in row.iter().enumerate() {
-                                            let truncated = if self.wrap_rows {
-                                                cell.clone()
-                                            } else {
-                                                let mut s: String = cell.chars().take(200).collect();
-                                                if cell.len() > 200 {
-                                                    s.push('…');
-                                                }
-                                                s
-                                            };
-                                            let color = if idx == 0 {
-                                                egui::Color32::from_rgb(220, 220, 220)
-                                            } else {
-                                                egui::Color32::from_rgb(200, 200, 200)
-                                            };
-                                            ui.add(
-                                                egui::Label::new(
-                                                    egui::RichText::new(truncated)
-                                                        .color(color)
-                                                        .family(egui::FontFamily::Monospace)
-                                                        .size(11.0),
-                                                ),
-                                            );
-                                        }
-                                        ui.end_row();
-                                    }
-                                });
+                                }
+                            });
                         });
                 });
         }
 
-        if reload_requested {
-            if let Some(path) = self.current_fp().map(|fp| PathBuf::from(&fp.file_path)) {
-                let idx = self.current_file;
-                self.files.remove(idx);
-                self.load_preview(path);
-            }
+        if reload_requested
+            && let Some(path) = self
+                .data_table
+                .current_fp()
+                .map(|fp| PathBuf::from(&fp.file_path))
+        {
+            let idx = self.data_table.current_file;
+            self.data_table.files.remove(idx);
+            self.data_table.load_preview(path);
         }
     }
 
@@ -784,56 +714,52 @@ impl SqlEditor {
             self.error_line,
             self.error_column,
             self.error_length,
-        ) {
-            if response.hovered() {
-                let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+        ) && response.hovered()
+        {
+            let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
 
-                // Calculate if hover is over the error area
-                if let Some(rect) = self.text_edit_rect {
-                    let line_height = 17.0;
-                    let char_width = 7.8;
+            // Calculate if hover is over the error area
+            if let Some(rect) = self.text_edit_rect {
+                let line_height = 17.0;
+                let char_width = 7.8;
 
-                    let error_y = rect.top() + 8.0 + ((error_line - 1) as f32 * line_height);
-                    let error_x_start = rect.left() + 8.0 + ((error_col - 1) as f32 * char_width);
-                    let error_x_end = error_x_start + (error_len as f32 * char_width);
+                let error_y = rect.top() + 8.0 + ((error_line - 1) as f32 * line_height);
+                let error_x_start = rect.left() + 8.0 + ((error_col - 1) as f32 * char_width);
+                let error_x_end = error_x_start + (error_len as f32 * char_width);
 
-                    // Check if mouse is hovering over error area
-                    if hover_pos.x >= error_x_start
-                        && hover_pos.x <= error_x_end
-                        && hover_pos.y >= error_y
-                        && hover_pos.y <= error_y + line_height
-                    {
-                        response.clone().on_hover_ui_at_pointer(|ui| {
-                            ui.set_max_width(300.0);
-                            Frame::new()
-                                .fill(egui::Color32::from_rgb(80, 40, 40))
-                                .stroke(egui::Stroke::new(
-                                    1.0,
-                                    egui::Color32::from_rgb(220, 80, 80),
-                                ))
-                                .corner_radius(CornerRadius::same(4))
-                                .inner_margin(Margin::same(8))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label("❌");
-                                        ui.vertical(|ui| {
-                                            ui.label(
-                                                egui::RichText::new("Syntax Error:")
-                                                    .color(egui::Color32::from_rgb(255, 200, 200))
-                                                    .size(12.0)
-                                                    .strong(),
-                                            );
-                                            ui.label(
-                                                egui::RichText::new(error_msg)
-                                                    .color(egui::Color32::from_rgb(255, 220, 220))
-                                                    .size(11.0)
-                                                    .family(egui::FontFamily::Monospace),
-                                            );
-                                        });
+                // Check if mouse is hovering over error area
+                if hover_pos.x >= error_x_start
+                    && hover_pos.x <= error_x_end
+                    && hover_pos.y >= error_y
+                    && hover_pos.y <= error_y + line_height
+                {
+                    response.clone().on_hover_ui_at_pointer(|ui| {
+                        ui.set_max_width(300.0);
+                        Frame::new()
+                            .fill(egui::Color32::from_rgb(80, 40, 40))
+                            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(220, 80, 80)))
+                            .corner_radius(CornerRadius::same(4))
+                            .inner_margin(Margin::same(8))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("❌");
+                                    ui.vertical(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("Syntax Error:")
+                                                .color(egui::Color32::from_rgb(255, 200, 200))
+                                                .size(12.0)
+                                                .strong(),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(error_msg)
+                                                .color(egui::Color32::from_rgb(255, 220, 220))
+                                                .size(11.0)
+                                                .family(egui::FontFamily::Monospace),
+                                        );
                                     });
                                 });
-                        });
-                    }
+                            });
+                    });
                 }
             }
         }
@@ -877,16 +803,15 @@ impl SqlEditor {
             // Paint error underline if this line has an error
             if let (Some(error_line), Some(error_col), Some(error_len)) =
                 (self.error_line, self.error_column, self.error_length)
+                && line_idx + 1 == error_line
             {
-                if line_idx + 1 == error_line {
-                    // Convert to 1-based line number
-                    let start_x = rect.left() + 8.0 + ((error_col - 1) as f32 * char_width);
-                    let end_x = start_x + (error_len as f32 * char_width);
-                    let underline_y = y_pos + 14.0; // Position underline below text
+                // Convert to 1-based line number
+                let start_x = rect.left() + 8.0 + ((error_col - 1) as f32 * char_width);
+                let end_x = start_x + (error_len as f32 * char_width);
+                let underline_y = y_pos + 14.0; // Position underline below text
 
-                    // Draw wavy red underline
-                    self.paint_error_underline(painter, start_x, end_x, underline_y);
-                }
+                // Draw wavy red underline
+                self.paint_error_underline(painter, start_x, end_x, underline_y);
             }
         }
     }
@@ -1129,15 +1054,13 @@ impl SqlEditor {
         if let Some(captures) = regex::Regex::new(r"(?i)line[:\s]*(\d+).*column[:\s]*(\d+)")
             .unwrap()
             .captures(error)
-        {
-            if let (Ok(line), Ok(col)) =
+            && let (Ok(line), Ok(col)) =
                 (captures[1].parse::<usize>(), captures[2].parse::<usize>())
-            {
-                self.error_line = Some(line);
-                self.error_column = Some(col);
-                self.error_length = Some(5); // Default error length
-                return;
-            }
+        {
+            self.error_line = Some(line);
+            self.error_column = Some(col);
+            self.error_length = Some(5); // Default error length
+            return;
         }
 
         // If we can't parse the exact position, try to guess based on common errors
@@ -1205,7 +1128,7 @@ impl SqlEditor {
         egui::Area::new(egui::Id::new("sql_suggestions"))
             .fixed_pos(popup_pos)
             .show(ui.ctx(), |ui| {
-                egui::Frame::popup(&ui.style())
+                egui::Frame::popup(ui.style())
                     .fill(egui::Color32::from_rgb(60, 60, 60))
                     .stroke(egui::Stroke::new(
                         1.0,
