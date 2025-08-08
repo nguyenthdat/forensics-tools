@@ -8,6 +8,7 @@ use crate::{
 mod filer;
 mod ftsq;
 mod sqlq;
+mod table;
 
 pub enum WakaMode {
     Filer,

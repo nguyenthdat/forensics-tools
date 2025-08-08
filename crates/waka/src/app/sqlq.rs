@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-
 use eframe::egui::ComboBox;
 use eframe::{egui, egui::Frame};
 use epaint::{CornerRadius, Margin, StrokeKind};
@@ -8,6 +7,13 @@ use qsv::config::Config;
 use sqlparser::ast::Statement;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+
+struct FilePreview {
+    file_path: String,
+    headers: Vec<String>,
+    preview_rows: Vec<Vec<String>>,
+    load_error: Option<String>,
+}
 
 pub struct SqlEditor {
     query: String,
@@ -39,10 +45,8 @@ pub struct SqlEditor {
     execution_time: String,
     row_count: usize,
 
-    file_path: Option<String>,
-    headers: Vec<String>,
-    preview_rows: Vec<Vec<String>>,
-    load_error: Option<String>,
+     files: Vec<FilePreview>,
+    current_file: usize, // index into files
 }
 
 impl SqlEditor {
@@ -74,10 +78,9 @@ impl SqlEditor {
             wrap_rows: false,
             execution_time: "69ms".to_string(),
             row_count: 1000,
-            file_path: None,
-            headers: Vec::new(),
-            preview_rows: Vec::new(),
-            load_error: None,
+            
+            files: Vec::new(),
+            current_file: 0,
         }
     }
 
@@ -144,7 +147,7 @@ impl SqlEditor {
                     // Instructions with bullet points
                     let instructions = [
                         "Run a Polars SQL query on your data using qsv sqlp.",
-                        "Refer to your file as a table named _t_1.",
+                        "Refer to your file as a table named <name of your CSV file>.",
                         "Save SQL query output to a file using qsv sqlp or qsv to or to the clipboard using qsv clipboard.",
                         "Important note: Decimal values may be truncated and very large SQL query outputs can cause issues.",
                     ];
@@ -177,66 +180,76 @@ impl SqlEditor {
     }
 
     fn handle_file_drop(&mut self, ctx: &egui::Context) {
-        // Only accept first valid file if nothing loaded yet
-        if self.file_path.is_some() {
-            return;
-        }
+        // Accept multiple files now
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if dropped.is_empty() {
             return;
         }
         for f in dropped {
             if let Some(path) = f.path {
-                // Basic filter: accept .csv or anything
                 self.load_preview(path);
-                break;
             }
         }
     }
 
-    fn load_preview(&mut self, path: PathBuf) {
-        self.load_error = None;
-        self.headers.clear();
-        self.preview_rows.clear();
-        self.file_path = Some(path.display().to_string());
 
-        // Build qsv Config
-        let cfg = Config::new(self.file_path.as_ref());
-        // Attempt to create reader (no headers false by default)
+      fn load_preview(&mut self, path: PathBuf) {
+        let file_path = path.display().to_string();
+        // Avoid reloading same file
+        if self.files.iter().any(|fp| fp.file_path == file_path) {
+            // Switch to it
+            if let Some(idx) = self.files.iter().position(|fp| fp.file_path == file_path) {
+                self.current_file = idx;
+            }
+            return;
+        }
+
+        let mut fp = FilePreview {
+            file_path: file_path.clone(),
+            headers: Vec::new(),
+            preview_rows: Vec::new(),
+            load_error: None,
+        };
+
+        let cfg = Config::new(Some(&file_path));
         match cfg.reader() {
             Ok(mut rdr) => {
-                // Headers
                 match rdr.headers() {
                     Ok(hdrs) => {
-                        self.headers = hdrs.iter().map(|s| s.to_string()).collect();
+                        fp.headers = hdrs.iter().map(|s| s.to_string()).collect();
                     }
                     Err(e) => {
-                        self.load_error = Some(format!("Cannot read headers: {e}"));
-                        return;
+                        fp.load_error = Some(format!("Cannot read headers: {e}"));
                     }
                 }
-                // Read first 50 (slice 0..50)
-                for rec_res in rdr.records().take(50) {
-                    match rec_res {
-                        Ok(rec) => {
-                            let row: Vec<String> = rec.iter().map(|s| s.to_string()).collect();
-                            self.preview_rows.push(row);
-                        }
-                        Err(e) => {
-                            self.load_error = Some(format!("Row read error: {e}"));
-                            break;
+                if fp.load_error.is_none() {
+                    for rec_res in rdr.records().take(50) {
+                        match rec_res {
+                            Ok(rec) => {
+                                fp.preview_rows
+                                    .push(rec.iter().map(|s| s.to_string()).collect());
+                            }
+                            Err(e) => {
+                                fp.load_error = Some(format!("Row read error: {e}"));
+                                break;
+                            }
                         }
                     }
-                }
-                if self.preview_rows.is_empty() && self.load_error.is_none() {
-                    self.load_error = Some("No data rows found.".to_string());
+                    if fp.preview_rows.is_empty() && fp.load_error.is_none() {
+                        fp.load_error = Some("No data rows found.".to_string());
+                    }
                 }
             }
             Err(e) => {
-                self.load_error = Some(format!("Unable to open file: {e}"));
+                fp.load_error = Some(format!("Unable to open file: {e}"));
             }
         }
+
+        self.files.push(fp);
+        self.current_file = self.files.len() - 1;
     }
+
+    
 
     fn show_sql_editor_section(&mut self, ui: &mut egui::Ui) {
         let available_height = ui.available_height();
@@ -348,9 +361,17 @@ impl SqlEditor {
             });
     }
 
+    fn current_fp(&self) -> Option<&FilePreview> {
+        self.files.get(self.current_file)
+    }
+
+    fn current_fp_mut(&mut self) -> Option<&mut FilePreview> {
+        self.files.get_mut(self.current_file)
+    }
+
     fn show_table_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            // Export data button
+            // Export button (placeholder)
             let export_button = egui::Button::new(
                 egui::RichText::new("📤 Export data")
                     .color(egui::Color32::WHITE)
@@ -358,28 +379,47 @@ impl SqlEditor {
             )
             .fill(egui::Color32::from_rgb(0, 120, 215))
             .corner_radius(CornerRadius::same(4));
-
             if ui.add(export_button).clicked() {
-                // Handle export - will be implemented when CSV loading is added
+                // TODO: implement export
+            }
+
+            // File selector if multiple files
+            if !self.files.is_empty() {
+                let cur_name = self
+                    .current_fp()
+                    .map(|f| f.file_path.as_str())
+                    .unwrap_or("<none>");
+                ComboBox::from_id_salt("file_selector")
+                    .selected_text(format!("📂 {}", cur_name))
+                    .width(220.0)
+                    .show_ui(ui, |ui| {
+                        for (idx, fp) in self.files.iter().enumerate() {
+                            if ui
+                                .selectable_label(idx == self.current_file, &fp.file_path)
+                                .clicked()
+                            {
+                                self.current_file = idx;
+                            }
+                        }
+                    });
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Show/Hide Columns dropdown
                 egui::ComboBox::from_label("Show/Hide Columns")
                     .selected_text("Show/Hide Columns")
                     .show_ui(ui, |ui| {
-                        // Placeholder for column headers - will be populated from CSV
-                        ui.label("Column headers will be loaded from CSV");
+                        if let Some(fp) = self.current_fp() {
+                            for h in &fp.headers {
+                                ui.label(h);
+                            }
+                        } else {
+                            ui.label("No file loaded");
+                        }
                     });
 
                 ui.add_space(16.0);
-
-                // Borders toggle
                 ui.checkbox(&mut self.show_borders, "Borders");
-
                 ui.add_space(8.0);
-
-                // Wrap Rows toggle
                 ui.checkbox(&mut self.wrap_rows, "Wrap Rows");
             });
         });
@@ -395,22 +435,29 @@ impl SqlEditor {
                     .size(12.0),
             );
 
+            let headers: Vec<String> = self
+                .current_fp()
+                .map(|fp| fp.headers.clone())
+                .unwrap_or_default();
+
             ComboBox::from_id_salt("search_column")
                 .selected_text(&self.search_column)
                 .show_ui(ui, |ui| {
-                    // Placeholder - will be populated from CSV headers
-                    ui.selectable_value(
-                        &mut self.search_column,
-                        "altnameid".to_string(),
-                        "altnameid",
-                    );
+                    if headers.is_empty() {
+                        ui.label("No headers");
+                    } else {
+                        for h in headers {
+                            ui.selectable_value(&mut self.search_column, h.clone(), h);
+                        }
+                    }
                 });
 
             ui.add_space(8.0);
 
+            let hint = format!("Search query for {}...", self.search_column);
             ui.add(
                 egui::TextEdit::singleline(&mut self.search_query)
-                    .hint_text("Search query for altnameid...")
+                    .hint_text(hint)
                     .desired_width(200.0),
             );
         });
@@ -418,9 +465,11 @@ impl SqlEditor {
         ui.add_space(12.0);
     }
 
-    fn show_results_placeholder(&mut self, ui: &mut egui::Ui) {
-        if self.file_path.is_none() {
-            // Drop target when no file loaded yet
+        fn show_results_placeholder(&mut self, ui: &mut egui::Ui) {
+        if self.files.is_empty() {
+            // ...existing drag & drop placeholder code unchanged...
+            // (Keep original block; omitted here for brevity)
+            // BEGIN unchanged placeholder
             let (rect, _resp) = ui.allocate_exact_size(
                 egui::Vec2::new(ui.available_width(), 180.0),
                 egui::Sense::hover(),
@@ -442,9 +491,9 @@ impl SqlEditor {
             let text = if dropping_files {
                 "Release to load CSV with first 50 rows preview"
             } else if hovering_files {
-                "Drop CSV file to preview first 50 rows"
+                "Drop CSV file(s) to preview first 50 rows"
             } else {
-                "📁 Drag & drop a CSV file here to preview first 50 rows (slice 0..50)"
+                "📁 Drag & drop CSV file(s) here to preview first 50 rows (slice 0..50)"
             };
             ui.put(
                 rect.shrink2(egui::Vec2::new(8.0, 8.0)),
@@ -456,117 +505,133 @@ impl SqlEditor {
                 )
                 .wrap(),
             );
-
-            if let Some(err) = &self.load_error {
-                ui.add_space(8.0);
-                ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
-            }
+            // Show most recent load error (none yet)
+            // END placeholder
             return;
         }
 
-        // If file loaded but no rows (empty file)
-        if self.preview_rows.is_empty() {
+        // Defer potential reload to avoid mutable borrow during immutable borrow of current_fp
+        let mut reload_requested = false;
+
+        {
+            let Some(fp) = self.current_fp() else { return };
+
+            if let Some(err) = &fp.load_error {
+                Frame::new()
+                    .fill(egui::Color32::from_rgb(45, 45, 45))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 40, 40)))
+                    .corner_radius(CornerRadius::same(4))
+                    .inner_margin(Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
+                    });
+                return;
+            }
+
+            if fp.preview_rows.is_empty() {
+                Frame::new()
+                    .fill(egui::Color32::from_rgb(45, 45, 45))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
+                    .corner_radius(CornerRadius::same(4))
+                    .inner_margin(Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new("File loaded, but no data rows were found.")
+                                .color(egui::Color32::from_rgb(200, 150, 150)),
+                        );
+                    });
+                return;
+            }
+
             Frame::new()
                 .fill(egui::Color32::from_rgb(45, 45, 45))
                 .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
                 .corner_radius(CornerRadius::same(4))
                 .inner_margin(Margin::same(8))
                 .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new("File loaded, but no data rows were found.")
-                            .color(egui::Color32::from_rgb(200, 150, 150)),
-                    );
-                });
-            return;
-        }
-
-        // Show preview table
-        Frame::new()
-            .fill(egui::Color32::from_rgb(45, 45, 45))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
-            .corner_radius(CornerRadius::same(4))
-            .inner_margin(Margin::same(8))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "🔎 Preview of {} (first {} rows)",
-                            self.file_path.as_deref().unwrap_or(""),
-                            self.preview_rows.len()
-                        ))
-                        .color(egui::Color32::WHITE)
-                        .size(12.0)
-                        .strong(),
-                    );
-                    if ui.button("⟲ Reload").clicked() {
-                        if let Some(p) = self.file_path.clone() {
-                            self.load_preview(PathBuf::from(p));
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "🔎 Preview of {} (first {} rows)  •  File {}/{}",
+                                fp.file_path,
+                                fp.preview_rows.len(),
+                                self.current_file + 1,
+                                self.files.len()
+                            ))
+                            .color(egui::Color32::WHITE)
+                            .size(12.0)
+                            .strong(),
+                        );
+                        if ui.button("⟲ Reload").clicked() {
+                            reload_requested = true;
                         }
-                    }
-                });
-                ui.add_space(6.0);
+                    });
+                    ui.add_space(6.0);
 
-                // Make table scrollable both horizontally & vertically
-                egui::ScrollArea::both()
-                    .id_salt("preview_table_scroll")
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        // Ensure a wide min width so horizontal scroll activates
-                        let total_min_width = (self.headers.len().max(1) as f32) * 140.0;
-                        ui.set_min_width(total_min_width);
+                    egui::ScrollArea::both()
+                        .id_salt(format!("preview_table_scroll_{}", self.current_file))
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            let total_min_width = (fp.headers.len().max(1) as f32) * 140.0;
+                            ui.set_min_width(total_min_width);
 
-                        egui::Grid::new("preview_header_grid")
-                            .striped(true)
-                            .spacing(egui::vec2(12.0, 4.0))
-                            .show(ui, |ui| {
-                                // Headers
-                                for h in &self.headers {
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(h)
-                                                .color(egui::Color32::from_rgb(190, 220, 255))
-                                                .family(egui::FontFamily::Monospace)
-                                                .size(12.0)
-                                                .strong(),
-                                        )
-                                        .selectable(false),
-                                    );
-                                }
-                                ui.end_row();
-
-                                // Rows
-                                for row in &self.preview_rows {
-                                    for (idx, cell) in row.iter().enumerate() {
-                                        let truncated = if self.wrap_rows {
-                                            cell.clone()
-                                        } else {
-                                            let mut s: String = cell.chars().take(200).collect();
-                                            if cell.len() > 200 {
-                                                s.push('…');
-                                            }
-                                            s
-                                        };
-                                        let color = if idx == 0 {
-                                            egui::Color32::from_rgb(220, 220, 220)
-                                        } else {
-                                            egui::Color32::from_rgb(200, 200, 200)
-                                        };
+                            egui::Grid::new(format!("preview_header_grid_{}", self.current_file))
+                                .striped(true)
+                                .spacing(egui::vec2(12.0, 4.0))
+                                .show(ui, |ui| {
+                                    for h in &fp.headers {
                                         ui.add(
                                             egui::Label::new(
-                                                egui::RichText::new(truncated)
-                                                    .color(color)
+                                                egui::RichText::new(h)
+                                                    .color(egui::Color32::from_rgb(190, 220, 255))
                                                     .family(egui::FontFamily::Monospace)
-                                                    .size(11.0),
+                                                    .size(12.0)
+                                                    .strong(),
                                             )
-                                            // .wrap_mode(egui::TextWrapMode::Wrap)
-                                            // .wrap(),
+                                            .selectable(false),
                                         );
                                     }
                                     ui.end_row();
-                                }
-                            });
-                    });
-            });
+
+                                    for row in &fp.preview_rows {
+                                        for (idx, cell) in row.iter().enumerate() {
+                                            let truncated = if self.wrap_rows {
+                                                cell.clone()
+                                            } else {
+                                                let mut s: String = cell.chars().take(200).collect();
+                                                if cell.len() > 200 {
+                                                    s.push('…');
+                                                }
+                                                s
+                                            };
+                                            let color = if idx == 0 {
+                                                egui::Color32::from_rgb(220, 220, 220)
+                                            } else {
+                                                egui::Color32::from_rgb(200, 200, 200)
+                                            };
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(truncated)
+                                                        .color(color)
+                                                        .family(egui::FontFamily::Monospace)
+                                                        .size(11.0),
+                                                ),
+                                            );
+                                        }
+                                        ui.end_row();
+                                    }
+                                });
+                        });
+                });
+        }
+
+        if reload_requested {
+            if let Some(path) = self.current_fp().map(|fp| PathBuf::from(&fp.file_path)) {
+                let idx = self.current_file;
+                self.files.remove(idx);
+                self.load_preview(path);
+            }
+        }
     }
 
     fn show_pagination(&mut self, ui: &mut egui::Ui) {
