@@ -8,24 +8,29 @@ homepage.workspace = true
 license.workspace = true
 
 [dependencies]
-anyhow.workspace = true
-eframe = { workspace = true, features = ["persistence", "serde", "wgpu"] }
-epaint = { workspace = true, features = ["serde"] }
-polars-sql = { workspace = true, features = [
-    "csv",
-    "json",
-    "serde",
-    "parquet",
-    "timezones",
-    "binary_encoding",
-    "dtype-decimal",
-] }
-sqlparser = { workspace = true }
-syntect = { workspace = true }
-unicode-segmentation = { workspace = true }
 qsv = { workspace = true, default-features = false, features = [
     "distrib_features",
     "polars",
 ] }
-regex = "1.11.1"
-mimalloc = "0.1.47"
+
+anyhow.workspace = true
+
+eframe = { workspace = true, features = ["persistence", "serde", "wgpu"] }
+epaint = { workspace = true, features = ["serde"] }
+
+polars-sql = { workspace = true, default-features = false }
+sqlparser = { workspace = true }
+
+syntect = { workspace = true }
+unicode-segmentation = { workspace = true }
+
+regex = { workspace = true }
+mimalloc = { workspace = true }
+
+tracing = { workspace = true, features = ["std", "log"] }
+tracing-subscriber = { workspace = true, features = [
+    "env-filter",
+    "fmt",
+    "std",
+    "tracing-log",
+] }
