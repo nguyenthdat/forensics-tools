@@ -506,44 +506,60 @@ impl SqlEditor {
                 });
                 ui.add_space(6.0);
 
-                egui::ScrollArea::vertical()
+                // Make table scrollable both horizontally & vertically
+                egui::ScrollArea::both()
                     .id_salt("preview_table_scroll")
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        // Header
+                        // Ensure a wide min width so horizontal scroll activates
+                        let total_min_width = (self.headers.len().max(1) as f32) * 140.0;
+                        ui.set_min_width(total_min_width);
+
                         egui::Grid::new("preview_header_grid")
                             .striped(true)
+                            .spacing(egui::vec2(12.0, 4.0))
                             .show(ui, |ui| {
+                                // Headers
                                 for h in &self.headers {
-                                    ui.label(
-                                        egui::RichText::new(h)
-                                            .color(egui::Color32::from_rgb(190, 220, 255))
-                                            .family(egui::FontFamily::Monospace)
-                                            .size(12.0)
-                                            .strong(),
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(h)
+                                                .color(egui::Color32::from_rgb(190, 220, 255))
+                                                .family(egui::FontFamily::Monospace)
+                                                .size(12.0)
+                                                .strong(),
+                                        )
+                                        .selectable(false),
                                     );
                                 }
                                 ui.end_row();
+
                                 // Rows
                                 for row in &self.preview_rows {
                                     for (idx, cell) in row.iter().enumerate() {
-                                        let text = if self.wrap_rows {
-                                            egui::RichText::new(cell)
+                                        let truncated = if self.wrap_rows {
+                                            cell.clone()
                                         } else {
-                                            egui::RichText::new(
-                                                cell.chars().take(200).collect::<String>()
-                                                    + if cell.len() > 200 { "…" } else { "" },
-                                            )
+                                            let mut s: String = cell.chars().take(200).collect();
+                                            if cell.len() > 200 {
+                                                s.push('…');
+                                            }
+                                            s
                                         };
                                         let color = if idx == 0 {
                                             egui::Color32::from_rgb(220, 220, 220)
                                         } else {
                                             egui::Color32::from_rgb(200, 200, 200)
                                         };
-                                        ui.label(
-                                            text.color(color)
-                                                .family(egui::FontFamily::Monospace)
-                                                .size(11.0),
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(truncated)
+                                                    .color(color)
+                                                    .family(egui::FontFamily::Monospace)
+                                                    .size(11.0),
+                                            )
+                                            // .wrap_mode(egui::TextWrapMode::Wrap)
+                                            // .wrap(),
                                         );
                                     }
                                     ui.end_row();
