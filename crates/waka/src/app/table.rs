@@ -224,6 +224,27 @@ impl DataTableArea {
         self.current_file = self.files.len() - 1;
     }
 
+    // Draw a crisp vector "X" close button, for font fallback safety.
+    fn close_button(ui: &mut Ui, emphasize: bool) -> egui::Response {
+        let desired = egui::vec2(18.0, 18.0);
+        let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
+
+        let color = if emphasize {
+            Color32::from_white_alpha(230)
+        } else {
+            Color32::from_white_alpha(110)
+        };
+        let stroke = Stroke::new(1.6, color);
+
+        // Draw a crisp X
+        let r = rect.shrink(4.0);
+        let painter = ui.painter();
+        painter.line_segment([r.left_top(), r.right_bottom()], stroke);
+        painter.line_segment([r.right_top(), r.left_bottom()], stroke);
+
+        response
+    }
+
     pub fn show_file_tabs(&mut self, ui: &mut Ui) {
         if self.files.is_empty() {
             return;
@@ -256,6 +277,7 @@ impl DataTableArea {
                                     Stroke::new(1.0, Color32::from_rgb(70, 70, 70))
                                 };
 
+                                // Modern VS Code–like tab with colored chip and close button
                                 Frame::new()
                                     .fill(tab_fill)
                                     .stroke(tab_stroke)
@@ -268,25 +290,37 @@ impl DataTableArea {
                                     .inner_margin(Margin::symmetric(10, 6))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
-                                            let resp = ui
-                                                .selectable_label(
-                                                    selected,
-                                                    RichText::new(name)
-                                                        .size(12.0)
-                                                        .color(Color32::WHITE),
-                                                )
-                                                .on_hover_text(&*fp.file_path);
+                                            // Chip-style label
+                                            let chip_fill = if selected {
+                                                Color32::from_rgb(0, 120, 215) // VS Code accent
+                                            } else {
+                                                Color32::from_rgb(58, 58, 58)
+                                            };
+                                            let chip_text = if selected {
+                                                Color32::WHITE
+                                            } else {
+                                                Color32::from_rgb(220, 220, 220)
+                                            };
+
+                                            let chip = Button::new(
+                                                RichText::new(name.clone())
+                                                    .size(12.0)
+                                                    .color(chip_text),
+                                            )
+                                            .fill(chip_fill)
+                                            .stroke(Stroke::new(1.0, Color32::from_rgb(70, 70, 70)))
+                                            .corner_radius(CornerRadius::same(6));
+
+                                            let resp = ui.add(chip).on_hover_text(&*fp.file_path);
 
                                             if resp.clicked() {
                                                 clicked_idx = Some(idx);
                                             }
 
+                                            // Close button with fixed size; visible on hover or when selected
+                                            let show_close = selected || resp.hovered();
                                             ui.add_space(6.0);
-                                            let close_resp = ui
-                                                .add(
-                                                    Button::new(RichText::new("✕").size(10.0))
-                                                        .fill(Color32::TRANSPARENT),
-                                                )
+                                            let close_resp = Self::close_button(ui, show_close)
                                                 .on_hover_text("Close");
 
                                             if close_resp.clicked() {
