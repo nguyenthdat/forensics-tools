@@ -33,13 +33,11 @@ pub struct SqlEditor {
     // New fields for the modern interface
     search_column: String,
     search_query: String,
-    rows_per_page: usize,
-    current_page: usize,
+
     show_borders: bool,
     wrap_rows: bool,
     execution_time: String,
     row_count: usize,
-
     data_table: DataTableArea,
 }
 
@@ -66,8 +64,6 @@ impl SqlEditor {
             editor_height_ratio: 0.35,
             search_column: "altnameid".to_string(),
             search_query: String::new(),
-            rows_per_page: 10,
-            current_page: 1,
             show_borders: true,
             wrap_rows: false,
             execution_time: "69ms".to_string(),
@@ -282,7 +278,7 @@ impl SqlEditor {
                     self.show_results_placeholder(ui);
 
                     // Pagination
-                    self.show_pagination(ui);
+                    // self.show_pagination(ui);
                 });
             });
     }
@@ -563,71 +559,6 @@ impl SqlEditor {
             self.data_table.files.remove(idx);
             self.data_table.load_preview(path);
         }
-    }
-
-    fn show_pagination(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Rows per page")
-                    .color(egui::Color32::WHITE)
-                    .size(12.0),
-            );
-
-            ComboBox::from_id_salt("rows_per_page")
-                .selected_text(format!("{}", self.rows_per_page))
-                .show_ui(ui, |ui| {
-                    for &count in &[10, 25, 50, 100] {
-                        ui.selectable_value(&mut self.rows_per_page, count, format!("{}", count));
-                    }
-                });
-
-            ui.add_space(16.0);
-
-            ui.label(
-                egui::RichText::new("Page 1 of 100")
-                    .color(egui::Color32::from_rgb(180, 180, 180))
-                    .size(12.0),
-            );
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Pagination controls
-                if ui.button("»").clicked() {
-                    // Last page
-                }
-
-                if ui.button("›").clicked() {
-                    self.current_page += 1;
-                }
-
-                ui.add(
-                    egui::DragValue::new(&mut self.current_page)
-                        .range(1..=100)
-                        .speed(1),
-                );
-
-                if ui.button("‹").clicked() && self.current_page > 1 {
-                    self.current_page -= 1;
-                }
-
-                if ui.button("«").clicked() {
-                    self.current_page = 1;
-                }
-            });
-        });
-
-        ui.add_space(8.0);
-
-        // Footer note
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Percentages and decimal values may be estimations. Data with large content may be truncated with ellipsis.")
-                    .color(egui::Color32::from_rgb(150, 150, 150))
-                    .size(10.0)
-                    .italics()
-            );
-        });
     }
 
     fn show_highlighted_editor(&mut self, ui: &mut egui::Ui, height: f32) {
