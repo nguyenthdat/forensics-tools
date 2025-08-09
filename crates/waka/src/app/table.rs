@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
 use bon::Builder;
-use eframe::egui::{self, Button, DragValue, Frame, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{self, Button, DragValue, Frame, Popup, RichText, ScrollArea, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
@@ -11,7 +11,7 @@ use ustr::{Ustr, ustr};
 
 use crate::util;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnFilter {
     pub enabled: bool,
     pub include: bool, // include selected values when true; else exclude them
@@ -21,6 +21,19 @@ pub struct ColumnFilter {
     pub distinct_cache: Option<Vec<Ustr>>, // lazily populated (sampled)
     #[serde(skip)]
     pub search: Ustr, // search within the dropdown
+}
+
+impl Default for ColumnFilter {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            include: true,
+            case_insensitive: false,
+            selected: Vec::new(),
+            distinct_cache: None,
+            search: ustr(""),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -125,87 +138,103 @@ impl DataTableArea {
                                     let active = self
                                         .current_fp()
                                         .and_then(|fp| fp.filters.get(ci))
-                                        .map(|f| f.enabled && !f.selected.is_empty())
+                                        .map(|f| !f.selected.is_empty())
                                         .unwrap_or(false);
 
-                                    let icon = if active { "⏷" } else { "▾" };
-                                    ui.menu_button(icon, |ui| {
-                                        self.ensure_distinct_for_col(ci);
-                                        if let Some(fp) = self.current_fp_mut() {
-                                            let f = &mut fp.filters[ci];
+                                    let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
 
-                                            ui.horizontal(|ui| {
-                                                ui.checkbox(&mut f.enabled, "Enable");
-                                                ui.checkbox(&mut f.include, "Include");
-                                                ui.checkbox(&mut f.case_insensitive, "Aa");
-                                            });
-                                            ui.add_space(4.0);
+                                    egui::ComboBox::from_id_salt(("col_filter", ci))
+                                        .selected_text(RichText::new("Filter").size(12.0).color(
+                                            if active {
+                                                Color32::from_rgb(0, 200, 120)
+                                            } else {
+                                                Color32::from_gray(230)
+                                            },
+                                        ))
+                                        .width(80.0)
+                                        .show_ui(ui, |ui| {
+                                            self.ensure_distinct_for_col(ci);
+                                            if let Some(fp) = self.current_fp_mut() {
+                                                let f = &mut fp.filters[ci];
 
-                                            let mut buf = f.search.to_string();
-                                            if ui
-                                                .add(
-                                                    TextEdit::singleline(&mut buf)
-                                                        .hint_text("Search values..."),
-                                                )
-                                                .changed()
-                                            {
-                                                f.search = ustr(&buf);
-                                            }
-                                            ui.add_space(4.0);
-
-                                            let mut values: Vec<Ustr> =
-                                                f.distinct_cache.clone().unwrap_or_default();
-                                            if !f.search.is_empty() {
-                                                let s = f.search.as_str().to_ascii_lowercase();
-                                                values.retain(|v| {
-                                                    v.as_str().to_ascii_lowercase().contains(&s)
+                                                // Keep only case-insensitive toggle; default include semantics, no enable/include toggles
+                                                ui.horizontal(|ui| {
+                                                    ui.checkbox(&mut f.case_insensitive, "Aa");
                                                 });
-                                            }
+                                                ui.add_space(4.0);
 
-                                            let mut selected_set: HashSet<Ustr> =
-                                                f.selected.iter().cloned().collect();
+                                                let mut buf = f.search.to_string();
+                                                if ui
+                                                    .add(
+                                                        TextEdit::singleline(&mut buf)
+                                                            .hint_text("Search values..."),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    f.search = ustr(&buf);
+                                                }
+                                                ui.add_space(4.0);
 
-                                            egui::ScrollArea::vertical().max_height(180.0).show(
-                                                ui,
-                                                |ui| {
-                                                    for val in values {
-                                                        let mut checked =
-                                                            selected_set.contains(&val);
-                                                        if ui
-                                                            .checkbox(&mut checked, val.as_str())
-                                                            .clicked()
-                                                        {
-                                                            if checked {
-                                                                selected_set.insert(val.clone());
-                                                            } else {
-                                                                selected_set.remove(&val);
+                                                let mut values: Vec<Ustr> =
+                                                    f.distinct_cache.clone().unwrap_or_default();
+                                                if !f.search.is_empty() {
+                                                    let s = f.search.as_str().to_ascii_lowercase();
+                                                    values.retain(|v| {
+                                                        v.as_str().to_ascii_lowercase().contains(&s)
+                                                    });
+                                                }
+
+                                                let mut selected_set: std::collections::HashSet<
+                                                    Ustr,
+                                                > = f.selected.iter().cloned().collect();
+
+                                                egui::ScrollArea::vertical()
+                                                    .max_height(180.0)
+                                                    .show(ui, |ui| {
+                                                        for val in values {
+                                                            let mut checked =
+                                                                selected_set.contains(&val);
+                                                            if ui
+                                                                .checkbox(
+                                                                    &mut checked,
+                                                                    val.as_str(),
+                                                                )
+                                                                .clicked()
+                                                            {
+                                                                if checked {
+                                                                    selected_set
+                                                                        .insert(val.clone());
+                                                                } else {
+                                                                    selected_set.remove(&val);
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                },
-                                            );
+                                                    });
 
-                                            f.selected = selected_set.into_iter().collect();
+                                                f.selected = selected_set.into_iter().collect();
 
-                                            ui.separator();
-                                            ui.horizontal(|ui| {
-                                                if ui.button("Select all").clicked() {
-                                                    if let Some(all) = &f.distinct_cache {
-                                                        f.selected = all.clone();
+                                                ui.separator();
+                                                ui.horizontal(|ui| {
+                                                    if ui.button("Select all").clicked() {
+                                                        if let Some(all) = &f.distinct_cache {
+                                                            f.selected = all.clone();
+                                                        }
+                                                        // Close popup and apply immediately for a snappier UX
+                                                        apply_now = true;
+                                                        Popup::close_id(ui.ctx(), popup_id);
                                                     }
-                                                    f.enabled = true;
-                                                }
-                                                if ui.button("Clear").clicked() {
-                                                    f.selected.clear();
-                                                    f.enabled = false;
-                                                    clear_now = true;
-                                                }
-                                                if ui.button("Apply").clicked() {
-                                                    apply_now = true;
-                                                }
-                                            });
-                                        }
-                                    });
+                                                    if ui.button("Clear").clicked() {
+                                                        f.selected.clear();
+                                                        clear_now = true;
+                                                        Popup::close_id(ui.ctx(), popup_id);
+                                                    }
+                                                    if ui.button("Apply").clicked() {
+                                                        apply_now = true;
+                                                        Popup::close_id(ui.ctx(), popup_id);
+                                                    }
+                                                });
+                                            }
+                                        });
 
                                     if apply_now {
                                         self.apply_filters_for_current_file();
@@ -717,7 +746,6 @@ impl DataTableArea {
     pub fn clear_all_filters_current_file(&mut self) {
         if let Some(fp) = self.current_fp_mut() {
             for f in &mut fp.filters {
-                f.enabled = false;
                 f.selected.clear();
                 f.search = ustr("");
             }
@@ -879,21 +907,16 @@ impl DataTableArea {
         }
 
         // Build active filters
-        let mut active: Vec<(
-            usize,
-            HashSet<String>,
-            bool, /*include*/
-            bool, /*casei*/
-        )> = Vec::new();
+        let mut active: Vec<(usize, HashSet<String>, bool /*casei*/)> = Vec::new();
         for (i, f) in fp.filters.iter().enumerate() {
-            if f.enabled && !f.selected.is_empty() {
+            if !f.selected.is_empty() {
                 let casei = f.case_insensitive;
                 let set: HashSet<String> = f
                     .selected
                     .iter()
                     .map(|v| util::norm(v, casei).to_string())
                     .collect();
-                active.push((i, set, f.include, casei));
+                active.push((i, set, casei));
             }
         }
 
@@ -911,23 +934,15 @@ impl DataTableArea {
             for (ri, rec_res) in idx.byte_records().enumerate() {
                 if let Ok(brec) = rec_res {
                     let mut keep = true;
-                    for (col, set, include, casei) in active.iter() {
+                    for (col, set, casei) in active.iter() {
                         let val = brec
                             .get(*col)
                             .map(|b| String::from_utf8_lossy(b).into_owned())
                             .unwrap_or_default();
                         let key = util::norm(&val, *casei);
-                        let in_set = set.contains(key.as_ref());
-                        if *include {
-                            if !in_set {
-                                keep = false;
-                                break;
-                            }
-                        } else {
-                            if in_set {
-                                keep = false;
-                                break;
-                            }
+                        if !set.contains(key.as_ref()) {
+                            keep = false;
+                            break;
                         }
                     }
                     if keep {
@@ -939,20 +954,12 @@ impl DataTableArea {
             for (ri, rec_res) in rdr.records().enumerate() {
                 if let Ok(rec) = rec_res {
                     let mut keep = true;
-                    for (col, set, include, casei) in active.iter() {
+                    for (col, set, casei) in active.iter() {
                         let val = rec.get(*col).unwrap_or("");
                         let key = util::norm(val, *casei);
-                        let in_set = set.contains(key.as_ref());
-                        if *include {
-                            if !in_set {
-                                keep = false;
-                                break;
-                            }
-                        } else {
-                            if in_set {
-                                keep = false;
-                                break;
-                            }
+                        if !set.contains(key.as_ref()) {
+                            keep = false;
+                            break;
                         }
                     }
                     if keep {
