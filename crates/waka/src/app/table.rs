@@ -2,10 +2,11 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
 use bon::Builder;
-use eframe::egui::{self, Button, DragValue, Frame, Popup, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{self, Button, DragValue, Frame, RichText, ScrollArea, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
+use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use ustr::{Ustr, ustr};
 
@@ -21,6 +22,11 @@ pub struct ColumnFilter {
     pub distinct_cache: Option<Vec<Ustr>>, // lazily populated (sampled)
     #[serde(skip)]
     pub search: Ustr, // search within the dropdown
+    // Regex filtering
+    pub use_regex: bool,  // enable regex filter
+    pub regex_text: Ustr, // pattern text (persisted)
+    #[serde(skip)]
+    pub regex_error: Option<Ustr>, // last regex compile error (ui only)
 }
 
 impl Default for ColumnFilter {
@@ -32,6 +38,9 @@ impl Default for ColumnFilter {
             selected: Vec::new(),
             distinct_cache: None,
             search: ustr(""),
+            use_regex: false,
+            regex_text: ustr(""),
+            regex_error: None,
         }
     }
 }
@@ -56,6 +65,8 @@ pub struct DataTableArea {
     pub toal_rows: usize, // kept for backward-compat
     pub rows_per_page: usize,
     pub page: usize, // 0-based
+    #[serde(skip)]
+    pub pending_reload: bool,
 }
 
 impl Default for DataTableArea {
@@ -66,6 +77,7 @@ impl Default for DataTableArea {
             toal_rows: 0,
             rows_per_page: 50,
             page: 0,
+            pending_reload: false,
         }
     }
 }
@@ -98,6 +110,8 @@ impl DataTableArea {
             Some(fp) => (fp.headers.clone(), fp.preview_rows.clone()),
             None => return,
         };
+        // Track if any filter popup is open this frame
+        let mut any_filter_popup_open = false;
         let col_width: f32 = 180.0;
         let ncols = headers.len().max(1);
 
@@ -151,20 +165,56 @@ impl DataTableArea {
                                         ))
                                         .width(80.0)
                                         .show_ui(ui, |ui| {
+                                            any_filter_popup_open = true;
                                             self.ensure_distinct_for_col(ci);
                                             if let Some(fp) = self.current_fp_mut() {
                                                 let f = &mut fp.filters[ci];
 
-                                                // Keep only case-insensitive toggle; apply immediately on change
+                                                // Sticky top controls: case sensitivity + regex
                                                 ui.horizontal(|ui| {
-                                                    if ui
-                                                        .checkbox(&mut f.case_insensitive, "Aa")
-                                                        .changed()
-                                                    {
+                                                    if ui.checkbox(&mut f.case_insensitive, "Aa").on_hover_text("Case-insensitive").changed() {
+                                                        apply_now = true;
+                                                    }
+                                                    if ui.checkbox(&mut f.use_regex, ".*").on_hover_text("Use regex filter").changed() {
+                                                        // Re-validate the current pattern when toggled
+                                                        if f.use_regex && !f.regex_text.is_empty() {
+                                                            let mut b = RegexBuilder::new(f.regex_text.as_str());
+                                                            b.case_insensitive(f.case_insensitive);
+                                                            match b.build() {
+                                                                Ok(_) => f.regex_error = None,
+                                                                Err(e) => f.regex_error = Some(ustr(&e.to_string())),
+                                                            }
+                                                        }
                                                         apply_now = true;
                                                     }
                                                 });
                                                 ui.add_space(4.0);
+
+                                                if f.use_regex {
+                                                    let mut rbuf = f.regex_text.to_string();
+                                                    let edited = ui
+                                                        .add(TextEdit::singleline(&mut rbuf).hint_text("Regex pattern (e.g. ^foo.*bar$)"))
+                                                        .changed();
+                                                    if edited {
+                                                        f.regex_text = ustr(&rbuf);
+                                                        // Try to compile with current case setting; show error if invalid
+                                                        let mut b = RegexBuilder::new(f.regex_text.as_str());
+                                                        b.case_insensitive(f.case_insensitive);
+                                                        match b.build() {
+                                                            Ok(_) => {
+                                                                f.regex_error = None;
+                                                                apply_now = true;
+                                                            }
+                                                            Err(e) => {
+                                                                f.regex_error = Some(ustr(&e.to_string()));
+                                                            }
+                                                        }
+                                                    }
+                                                    if let Some(err) = &f.regex_error {
+                                                        ui.label(RichText::new(format!("⚠ Invalid regex: {}", err)).color(Color32::from_rgb(220, 90, 90)).size(11.0));
+                                                    }
+                                                    ui.add_space(4.0);
+                                                }
 
                                                 let mut buf = f.search.to_string();
                                                 if ui
@@ -220,6 +270,15 @@ impl DataTableArea {
 
                                                 ui.separator();
                                                 ui.horizontal(|ui| {
+                                                    // Sticky toggles at bottom too
+                                                    if ui.checkbox(&mut f.case_insensitive, "Aa").on_hover_text("Case-insensitive").changed() {
+                                                        apply_now = true;
+                                                    }
+                                                    if ui.checkbox(&mut f.use_regex, ".*").on_hover_text("Use regex").changed() {
+                                                        apply_now = true;
+                                                    }
+                                                    ui.add_space(8.0);
+
                                                     if ui.button("Select all").clicked() {
                                                         if let Some(all) = &f.distinct_cache {
                                                             f.selected = all.clone();
@@ -239,13 +298,10 @@ impl DataTableArea {
                                             }
                                         });
 
-                                    if apply_now {
+                                    if apply_now || clear_now {
+                                        // Apply filter changes immediately but defer the heavy table reload
                                         self.apply_filters_for_current_file();
-                                        self.reload_current_preview_page();
-                                    }
-                                    if clear_now {
-                                        self.apply_filters_for_current_file();
-                                        self.reload_current_preview_page();
+                                        self.pending_reload = true;
                                     }
                                 });
                             });
@@ -285,6 +341,11 @@ impl DataTableArea {
                                 });
                             });
                         });
+                    // If any filter popup is open, keep the table stable so typing/clicking doesn't close it.
+                    if self.pending_reload && !any_filter_popup_open {
+                        self.reload_current_preview_page();
+                        self.pending_reload = false;
+                    }
                 });
             });
     }
@@ -751,6 +812,9 @@ impl DataTableArea {
             for f in &mut fp.filters {
                 f.selected.clear();
                 f.search = ustr("");
+                f.use_regex = false;
+                f.regex_text = ustr("");
+                f.regex_error = None;
             }
             fp.filtered_indices = None;
             fp.page = 0;
@@ -909,17 +973,37 @@ impl DataTableArea {
             return;
         }
 
-        // Build active filters
-        let mut active: Vec<(usize, HashSet<String>, bool /*casei*/)> = Vec::new();
+        // Build active filters (now supporting regex)
+        let mut active: Vec<(usize, HashSet<String>, bool /*casei*/, Option<Regex>)> = Vec::new();
         for (i, f) in fp.filters.iter().enumerate() {
-            if !f.selected.is_empty() {
-                let casei = f.case_insensitive;
-                let set: HashSet<String> = f
-                    .selected
+            let casei = f.case_insensitive;
+            let set: HashSet<String> = if !f.selected.is_empty() {
+                f.selected
                     .iter()
                     .map(|v| util::norm(v, casei).to_string())
-                    .collect();
-                active.push((i, set, casei));
+                    .collect()
+            } else {
+                HashSet::new()
+            };
+
+            let rx = if f.use_regex {
+                let pat = f.regex_text.as_str();
+                if !pat.is_empty() {
+                    let mut b = RegexBuilder::new(pat);
+                    b.case_insensitive(casei);
+                    match b.build() {
+                        Ok(r) => Some(r),
+                        Err(_) => None, // ignore invalid regex at apply time
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if !set.is_empty() || rx.is_some() {
+                active.push((i, set, casei, rx));
             }
         }
 
@@ -937,15 +1021,25 @@ impl DataTableArea {
             for (ri, rec_res) in idx.byte_records().enumerate() {
                 if let Ok(brec) = rec_res {
                     let mut keep = true;
-                    for (col, set, casei) in active.iter() {
+                    for (col, set, casei, rx) in active.iter() {
                         let val = brec
                             .get(*col)
                             .map(|b| String::from_utf8_lossy(b).into_owned())
                             .unwrap_or_default();
-                        let key = util::norm(&val, *casei);
-                        if !set.contains(key.as_ref()) {
-                            keep = false;
-                            break;
+                        // If there are selected values, enforce membership
+                        if !set.is_empty() {
+                            let key = util::norm(&val, *casei);
+                            if !set.contains(key.as_ref()) {
+                                keep = false;
+                                break;
+                            }
+                        }
+                        // If a regex is active, enforce regex match (on original value)
+                        if let Some(r) = rx {
+                            if !r.is_match(&val) {
+                                keep = false;
+                                break;
+                            }
                         }
                     }
                     if keep {
@@ -957,12 +1051,22 @@ impl DataTableArea {
             for (ri, rec_res) in rdr.records().enumerate() {
                 if let Ok(rec) = rec_res {
                     let mut keep = true;
-                    for (col, set, casei) in active.iter() {
+                    for (col, set, casei, rx) in active.iter() {
                         let val = rec.get(*col).unwrap_or("");
-                        let key = util::norm(val, *casei);
-                        if !set.contains(key.as_ref()) {
-                            keep = false;
-                            break;
+                        // If there are selected values, enforce membership
+                        if !set.is_empty() {
+                            let key = util::norm(val, *casei);
+                            if !set.contains(key.as_ref()) {
+                                keep = false;
+                                break;
+                            }
+                        }
+                        // If a regex is active, enforce regex match (on original value)
+                        if let Some(r) = rx {
+                            if !r.is_match(val) {
+                                keep = false;
+                                break;
+                            }
                         }
                     }
                     if keep {
