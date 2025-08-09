@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use bon::Builder;
 use eframe::egui::{
-    self, Button, DragValue, Frame, Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, Ui,
-    popup_below_widget,
+    self, Align, Button, DragValue, Frame, Layout, Popup, PopupCloseBehavior, RectAlign, RichText,
+    ScrollArea, TextEdit, Ui,
 };
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
@@ -170,12 +170,15 @@ impl DataTableArea {
                                         Popup::toggle_id(ui.ctx(), popup_id);
                                     }
 
-                                    popup_below_widget(
-                                        ui,
-                                        popup_id,
-                                        &btn_resp,
-                                        PopupCloseBehavior::CloseOnClickOutside,
-                                        |ui: &mut Ui| {
+                                    Popup::from_response(&btn_resp)
+                                        .layout(Layout::top_down_justified(Align::LEFT))
+                                        .open_memory(None)
+                                        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                                        .id(popup_id)
+                                        .align(RectAlign::BOTTOM_START)
+                                        .width(btn_resp.rect.width())
+                                        .show(|ui: &mut Ui| {
+                                            ui.set_min_width(ui.available_width());
                                             any_filter_popup_open = true;
                                             self.ensure_distinct_for_col(ci);
                                             if let Some(fp) = self.current_fp_mut() {
@@ -338,8 +341,7 @@ impl DataTableArea {
                                                     }
                                                 });
                                             }
-                                        },
-                                    );
+                                        });
 
                                     if apply_now || clear_now {
                                         // Apply filter changes immediately but defer the heavy table reload
