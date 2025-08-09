@@ -1,22 +1,39 @@
+use std::collections::{BTreeSet, HashSet};
+use std::path::PathBuf;
+
 use bon::Builder;
-use eframe::egui::{self, Button, DragValue, Frame, RichText, ScrollArea, Ui};
+use eframe::egui::{self, Button, Checkbox, DragValue, Frame, RichText, ScrollArea, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use ustr::{Ustr, ustr};
 
 use crate::util;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ColumnFilter {
+    pub enabled: bool,
+    pub include: bool, // include selected values when true; else exclude them
+    pub case_insensitive: bool, // Aa toggle
+    pub selected: Vec<Ustr>, // chosen values in this column
+    #[serde(skip)]
+    pub distinct_cache: Option<Vec<Ustr>>, // lazily populated (sampled)
+    #[serde(skip)]
+    pub search: Ustr, // search within the dropdown
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct FilePreview {
     pub file_path: Ustr,
     pub headers: Vec<Ustr>,
     pub preview_rows: Vec<Vec<Ustr>>,
+    pub filters: Vec<ColumnFilter>,
     pub page: usize, // 0-based, per-file current page
     pub total_rows: Option<u64>,
     pub load_error: Option<Ustr>,
+    #[serde(skip)]
+    pub filtered_indices: Option<Vec<u64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -86,17 +103,113 @@ impl DataTableArea {
                         header_tbl = header_tbl.column(Column::initial(col_width).clip(true));
                     }
                     header_tbl.header(22.0, |mut header| {
-                        for h in &fp.headers {
+                        // REPLACE the inner for-loop with this:
+                        for (ci, h) in fp.headers.iter().enumerate() {
                             header.col(|ui| {
-                                ui.add_sized(
-                                    egui::vec2(col_width, 20.0),
-                                    egui::Label::new(
-                                        RichText::new(h.as_str())
-                                            .strong()
-                                            .size(12.0)
-                                            .color(Color32::WHITE),
-                                    ),
-                                );
+                                ui.horizontal(|ui| {
+                                    // label (leave room for filter button)
+                                    ui.add_sized(
+                                        egui::vec2(col_width - 24.0, 20.0),
+                                        egui::Label::new(
+                                            RichText::new(h.as_str())
+                                                .strong()
+                                                .size(12.0)
+                                                .color(Color32::WHITE),
+                                        ),
+                                    );
+
+                                    // filter dropdown button
+                                    let mut apply_now = false;
+                                    let mut clear_now = false;
+
+                                    let active = self
+                                        .current_fp()
+                                        .and_then(|fp| fp.filters.get(ci))
+                                        .map(|f| f.enabled && !f.selected.is_empty())
+                                        .unwrap_or(false);
+
+                                    let icon = if active { "⏷" } else { "▾" };
+                                    ui.menu_button(icon, |ui| {
+                                        self.ensure_distinct_for_col(ci);
+                                        if let Some(fp) = self.current_fp_mut() {
+                                            let f = &mut fp.filters[ci];
+
+                                            ui.horizontal(|ui| {
+                                                ui.checkbox(&mut f.enabled, "Enable");
+                                                ui.checkbox(&mut f.include, "Include");
+                                                ui.checkbox(&mut f.case_insensitive, "Aa");
+                                            });
+                                            ui.add_space(4.0);
+
+                                            ui.add(
+                                                TextEdit::singleline(&mut f.search.to_string())
+                                                    .hint_text("Search values..."),
+                                            );
+                                            ui.add_space(4.0);
+
+                                            let mut values: Vec<Ustr> =
+                                                f.distinct_cache.clone().unwrap_or_default();
+                                            if !f.search.is_empty() {
+                                                let s = f.search.to_ascii_lowercase();
+                                                values.retain(|v| {
+                                                    v.as_str().to_ascii_lowercase().contains(&s)
+                                                });
+                                            }
+
+                                            let mut selected_set: HashSet<Ustr> =
+                                                f.selected.iter().cloned().collect();
+
+                                            egui::ScrollArea::vertical().max_height(180.0).show(
+                                                ui,
+                                                |ui| {
+                                                    for val in values {
+                                                        let mut checked =
+                                                            selected_set.contains(&val);
+                                                        if ui
+                                                            .checkbox(&mut checked, val.as_str())
+                                                            .clicked()
+                                                        {
+                                                            if checked {
+                                                                selected_set.insert(val.clone());
+                                                            } else {
+                                                                selected_set.remove(&val);
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                            );
+
+                                            f.selected = selected_set.into_iter().collect();
+
+                                            ui.separator();
+                                            ui.horizontal(|ui| {
+                                                if ui.button("Select all").clicked() {
+                                                    if let Some(all) = &f.distinct_cache {
+                                                        f.selected = all.clone();
+                                                    }
+                                                    f.enabled = true;
+                                                }
+                                                if ui.button("Clear").clicked() {
+                                                    f.selected.clear();
+                                                    f.enabled = false;
+                                                    clear_now = true;
+                                                }
+                                                if ui.button("Apply").clicked() {
+                                                    apply_now = true;
+                                                }
+                                            });
+                                        }
+                                    });
+
+                                    if apply_now {
+                                        self.apply_filters_for_current_file();
+                                        self.reload_current_preview_page();
+                                    }
+                                    if clear_now {
+                                        self.apply_filters_for_current_file();
+                                        self.reload_current_preview_page();
+                                    }
+                                });
                             });
                         }
                     });
@@ -187,22 +300,67 @@ impl DataTableArea {
                 new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
             }
 
-            let start = new_page.saturating_mul(rows_per_page);
+            if let Some(ref filt) = fp.filtered_indices {
+                let total = filt.len();
+                new_total_rows = Some(total);
+                let total_pages = if rows_per_page == 0 {
+                    0
+                } else {
+                    total.div_ceil(rows_per_page)
+                };
+                if total_pages == 0 {
+                    new_page = 0;
+                } else if new_page >= total_pages {
+                    new_page = total_pages - 1;
+                }
 
-            // Seek to the first record of the page and take only rows_per_page records
-            if let Err(e) = idx.seek(start as u64) {
-                fp.load_error = Some(ustr(&format!("Index seek error: {e}")));
-            } else {
-                for rec_res in idx.byte_records().take(rows_per_page) {
-                    match rec_res {
-                        Ok(brec) => {
-                            let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
-                            row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
-                            fp.preview_rows.push(row);
+                let start_idx = new_page.saturating_mul(rows_per_page);
+                let end_idx = (start_idx + rows_per_page).min(total);
+                let slice = &filt[start_idx..end_idx];
+
+                // seek in contiguous chunks to minimize random seeks
+                let mut i = 0;
+                while i < slice.len() {
+                    let base = slice[i];
+                    let mut len = 1usize;
+                    while i + len < slice.len() && slice[i + len] == base + len as u64 {
+                        len += 1;
+                    }
+                    if let Err(e) = idx.seek(base) {
+                        fp.load_error = Some(ustr(&format!("Index seek error: {e}")));
+                        break;
+                    }
+                    for rec_res in idx.byte_records().take(len) {
+                        match rec_res {
+                            Ok(brec) => {
+                                let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
+                                row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
+                                fp.preview_rows.push(row);
+                            }
+                            Err(e) => {
+                                fp.load_error = Some(ustr(&format!("Row read error: {e}")));
+                                break;
+                            }
                         }
-                        Err(e) => {
-                            fp.load_error = Some(ustr(&format!("Row read error: {e}")));
-                            break;
+                    }
+                    i += len;
+                }
+            } else {
+                let start = new_page.saturating_mul(rows_per_page);
+                if let Err(e) = idx.seek(start as u64) {
+                    fp.load_error = Some(ustr(&format!("Index seek error: {e}")));
+                } else {
+                    for rec_res in idx.byte_records().take(rows_per_page) {
+                        match rec_res {
+                            Ok(brec) => {
+                                let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
+                                row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
+                                fp.preview_rows.push(row);
+                            }
+                            Err(e) => {
+                                fp.load_error = Some(ustr(&format!("Row read error: {e}")));
+                                break;
+                            }
                         }
                     }
                 }
@@ -237,18 +395,61 @@ impl DataTableArea {
                         new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
                     }
 
-                    let start = new_page.saturating_mul(rows_per_page);
+                    if let Some(ref filt) = fp.filtered_indices {
+                        let total = filt.len();
+                        new_total_rows = Some(total);
+                        let total_pages = if rows_per_page == 0 {
+                            0
+                        } else {
+                            total.div_ceil(rows_per_page)
+                        };
+                        if total_pages == 0 {
+                            new_page = 0;
+                        } else if new_page >= total_pages {
+                            new_page = total_pages - 1;
+                        }
 
-                    for rec_res in rdr.records().skip(start).take(rows_per_page) {
-                        match rec_res {
-                            Ok(rec) => {
-                                let mut row = Vec::with_capacity(fp.headers.len().max(rec.len()));
-                                row.extend(rec.iter().map(ustr));
-                                fp.preview_rows.push(row);
+                        let start_idx = new_page.saturating_mul(rows_per_page);
+                        let end_idx = (start_idx + rows_per_page).min(total);
+                        let mut wanted_iter = filt[start_idx..end_idx].iter().copied();
+                        let mut next = wanted_iter.next();
+
+                        for (ri, rec_res) in rdr.records().enumerate() {
+                            match next {
+                                Some(want) if ri as u64 == want => {
+                                    if let Ok(rec) = rec_res {
+                                        let mut row =
+                                            Vec::with_capacity(fp.headers.len().max(rec.len()));
+                                        row.extend(rec.iter().map(ustr));
+                                        fp.preview_rows.push(row);
+                                    }
+                                    next = wanted_iter.next();
+                                    if next.is_none() {
+                                        break;
+                                    }
+                                }
+                                Some(want) if (ri as u64) < want => continue,
+                                _ => {
+                                    if next.is_none() {
+                                        break;
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                fp.load_error = Some(ustr(&format!("Row read error: {e}")));
-                                break;
+                        }
+                    } else {
+                        let start = new_page.saturating_mul(rows_per_page);
+                        for rec_res in rdr.records().skip(start).take(rows_per_page) {
+                            match rec_res {
+                                Ok(rec) => {
+                                    let mut row =
+                                        Vec::with_capacity(fp.headers.len().max(rec.len()));
+                                    row.extend(rec.iter().map(ustr));
+                                    fp.preview_rows.push(row);
+                                }
+                                Err(e) => {
+                                    fp.load_error = Some(ustr(&format!("Row read error: {e}")));
+                                    break;
+                                }
                             }
                         }
                     }
@@ -304,9 +505,11 @@ impl DataTableArea {
             file_path,
             headers: Vec::new(),
             preview_rows: Vec::new(),
+            filters: Vec::new(),
             page: 0,
             total_rows: None,
             load_error: None,
+            filtered_indices: None,
         };
 
         // Count first so we can clamp paging appropriately (byte_records for speed)
@@ -322,6 +525,9 @@ impl DataTableArea {
                     fp.headers = hdrs.iter().map(ustr).collect();
                 } else {
                     fp.load_error = Some(ustr("Cannot read headers"));
+                }
+                if fp.load_error.is_none() {
+                    fp.filters = vec![ColumnFilter::default(); fp.headers.len()];
                 }
 
                 if fp.load_error.is_none() {
@@ -591,5 +797,153 @@ impl DataTableArea {
                 self.page = page;
             }
         }
+    }
+
+    // Populate the unique values cache for a column (uses index if available)
+    fn ensure_distinct_for_col(&mut self, col: usize) {
+        let Some(fp) = self.current_fp_mut() else {
+            return;
+        };
+        if col >= fp.headers.len() {
+            return;
+        }
+        if fp
+            .filters
+            .get(col)
+            .and_then(|f| f.distinct_cache.as_ref())
+            .is_some()
+        {
+            return;
+        }
+
+        let path_str = fp.file_path.to_string();
+        let cfg = Config::new(Some(&path_str));
+        let mut set: BTreeSet<Ustr> = BTreeSet::new();
+        let limit = 2_000usize; // keep menus snappy
+
+        if let Ok(Some(mut idx)) = cfg.indexed() {
+            for rec_res in idx.byte_records() {
+                if let Ok(brec) = rec_res {
+                    if let Some(val) = brec.get(col) {
+                        set.insert(ustr(&String::from_utf8_lossy(val)));
+                        if set.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        } else if let Ok(mut rdr) = cfg.reader() {
+            for rec_res in rdr.records() {
+                if let Ok(rec) = rec_res {
+                    if let Some(val) = rec.get(col) {
+                        set.insert(ustr(val));
+                        if set.len() >= limit {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let distinct: Vec<Ustr> = set.into_iter().collect();
+        if let Some(f) = fp.filters.get_mut(col) {
+            f.distinct_cache = Some(distinct);
+        }
+    }
+
+    pub fn apply_filters_for_current_file(&mut self) {
+        let Some(fp) = self.current_fp_mut() else {
+            return;
+        };
+        if fp.filters.is_empty() {
+            return;
+        }
+
+        // Build active filters
+        let mut active: Vec<(
+            usize,
+            HashSet<String>,
+            bool, /*include*/
+            bool, /*casei*/
+        )> = Vec::new();
+        for (i, f) in fp.filters.iter().enumerate() {
+            if f.enabled && !f.selected.is_empty() {
+                let casei = f.case_insensitive;
+                let set: HashSet<String> = f
+                    .selected
+                    .iter()
+                    .map(|v| util::norm(v, casei).to_string())
+                    .collect();
+                active.push((i, set, f.include, casei));
+            }
+        }
+
+        if active.is_empty() {
+            fp.filtered_indices = None;
+            fp.page = 0;
+            return;
+        }
+
+        let path_str = fp.file_path.to_string();
+        let cfg = Config::new(Some(&path_str));
+        let mut out: Vec<u64> = Vec::new();
+
+        if let Ok(Some(mut idx)) = cfg.indexed() {
+            for (ri, rec_res) in idx.byte_records().enumerate() {
+                if let Ok(brec) = rec_res {
+                    let mut keep = true;
+                    for (col, set, include, casei) in active.iter() {
+                        let val = brec
+                            .get(*col)
+                            .map(|b| String::from_utf8_lossy(b).into_owned())
+                            .unwrap_or_default();
+                        let key = util::norm(&val, *casei);
+                        let in_set = set.contains(key.as_ref());
+                        if *include {
+                            if !in_set {
+                                keep = false;
+                                break;
+                            }
+                        } else {
+                            if in_set {
+                                keep = false;
+                                break;
+                            }
+                        }
+                    }
+                    if keep {
+                        out.push(ri as u64);
+                    }
+                }
+            }
+        } else if let Ok(mut rdr) = cfg.reader() {
+            for (ri, rec_res) in rdr.records().enumerate() {
+                if let Ok(rec) = rec_res {
+                    let mut keep = true;
+                    for (col, set, include, casei) in active.iter() {
+                        let val = rec.get(*col).unwrap_or("");
+                        let key = util::norm(val, *casei);
+                        let in_set = set.contains(key.as_ref());
+                        if *include {
+                            if !in_set {
+                                keep = false;
+                                break;
+                            }
+                        } else {
+                            if in_set {
+                                keep = false;
+                                break;
+                            }
+                        }
+                    }
+                    if keep {
+                        out.push(ri as u64);
+                    }
+                }
+            }
+        }
+
+        fp.filtered_indices = Some(out);
+        fp.page = 0;
     }
 }
