@@ -2,22 +2,23 @@ use eframe::egui;
 
 use crate::{
     APP_VERSION,
-    app::{ftsq::FtsEditor, sqlq::SqlEditor},
+    app::{basic::BasicEditor, ftsq::FtsEditor, sqlq::SqlEditor},
 };
 
-mod filer;
+mod basic;
 mod ftsq;
 mod sqlq;
 mod table;
 
 pub enum WakaMode {
-    Filer,
+    Basic,
     FullTextSearch,
     Sql,
     Workflow,
 }
 
 pub struct WakaApp {
+    basic_editor: BasicEditor,
     sql_editor: SqlEditor,
     fts_editor: FtsEditor,
     current_mode: WakaMode,
@@ -26,8 +27,9 @@ pub struct WakaApp {
 impl WakaApp {
     pub fn new() -> Self {
         WakaApp {
+            basic_editor: BasicEditor::new(),
             sql_editor: SqlEditor::new(),
-            current_mode: WakaMode::Filer,
+            current_mode: WakaMode::Basic,
             fts_editor: FtsEditor::new(),
         }
     }
@@ -128,7 +130,7 @@ impl eframe::App for WakaApp {
                             .clicked()
                         {
                             // Show toolbox submenu or switch to default tool
-                            self.current_mode = WakaMode::Filer;
+                            self.current_mode = WakaMode::Basic;
                         }
                     });
 
@@ -197,14 +199,14 @@ impl eframe::App for WakaApp {
                                     .add(
                                         egui::Button::new(
                                             egui::RichText::new("Filer").size(12.0).color(
-                                                if matches!(self.current_mode, WakaMode::Filer) {
+                                                if matches!(self.current_mode, WakaMode::Basic) {
                                                     egui::Color32::WHITE
                                                 } else {
                                                     egui::Color32::GRAY
                                                 },
                                             ),
                                         )
-                                        .fill(if matches!(self.current_mode, WakaMode::Filer) {
+                                        .fill(if matches!(self.current_mode, WakaMode::Basic) {
                                             egui::Color32::from_rgb(0, 150, 255)
                                         } else {
                                             egui::Color32::TRANSPARENT
@@ -213,7 +215,7 @@ impl eframe::App for WakaApp {
                                     )
                                     .clicked()
                                 {
-                                    self.current_mode = WakaMode::Filer;
+                                    self.current_mode = WakaMode::Basic;
                                 }
                             });
                         });
@@ -223,9 +225,8 @@ impl eframe::App for WakaApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             match self.current_mode {
-                WakaMode::Filer => {
-                    ui.label("File Explorer Mode");
-                    // TODO: Add file explorer UI here
+                WakaMode::Basic => {
+                    self.basic_editor.show(ui);
                 }
                 WakaMode::FullTextSearch => {
                     // ui.label("Full Text Search Mode");

@@ -276,9 +276,6 @@ impl SqlEditor {
 
                     // Results content placeholder
                     self.show_results_placeholder(ui);
-
-                    // Pagination
-                    // self.show_pagination(ui);
                 });
             });
     }
