@@ -1,5 +1,6 @@
 use bon::Builder;
 use eframe::egui::{self, Button, DragValue, Frame, RichText, ScrollArea, Ui};
+use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
 use serde::{Deserialize, Serialize};
@@ -66,61 +67,74 @@ impl DataTableArea {
         let Some(fp) = self.current_fp() else {
             return;
         };
-        let col_width: f32 = 180.0; // keep columns aligned; adjust as needed
+        let col_width: f32 = 180.0;
+        let ncols = fp.headers.len().max(1);
 
-        // Outer horizontal scroll so header + body move together horizontally
+        // Single horizontal scroll area that wraps both header and body
         ScrollArea::horizontal()
             .id_salt("dt_preview_hscroll")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                // HEADER (pinned vertically): not inside vertical scroll
-                Frame::new()
-                    .fill(Color32::from_rgb(50, 50, 50))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(70, 70, 70)))
-                    .inner_margin(Margin::symmetric(8, 6))
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            for h in &fp.headers {
-                                let text = h.as_str();
-                                let lbl = RichText::new(text)
-                                    .strong()
-                                    .size(12.0)
-                                    .color(Color32::WHITE);
-                                ui.add_sized(egui::vec2(col_width, 20.0), egui::Label::new(lbl));
-                            }
-                        });
-                    });
-
-                ui.add_space(4.0);
-
-                // BODY (vertically scrollable only)
-                ScrollArea::vertical()
-                    .id_salt("dt_preview_vscroll")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        for (ri, row) in fp.preview_rows.iter().enumerate() {
-                            // zebra striping for readability
-                            let fill = if ri % 2 == 0 {
-                                Color32::from_rgb(46, 46, 46)
-                            } else {
-                                Color32::from_rgb(40, 40, 40)
-                            };
-                            Frame::new()
-                                .fill(fill)
-                                .inner_margin(Margin::symmetric(8, 4))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        for cell in row {
-                                            let txt = cell.as_str();
-                                            ui.add_sized(
-                                                egui::vec2(col_width, 18.0),
-                                                egui::Label::new(RichText::new(txt).size(12.0)),
-                                            );
-                                        }
-                                    });
-                                });
+                // Use a shared id so header & body reuse the same column state (widths, resize)
+                ui.push_id("dt_preview_table", |ui| {
+                    // --- HEADER (pinned vertically) ---
+                    let mut header_tbl = TableBuilder::new(ui)
+                        .striped(false)
+                        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                        .resizable(true);
+                    for _ in 0..ncols {
+                        header_tbl = header_tbl.column(Column::initial(col_width).clip(true));
+                    }
+                    header_tbl.header(22.0, |mut header| {
+                        for h in &fp.headers {
+                            header.col(|ui| {
+                                ui.add_sized(
+                                    egui::vec2(col_width, 20.0),
+                                    egui::Label::new(
+                                        RichText::new(h.as_str())
+                                            .strong()
+                                            .size(12.0)
+                                            .color(Color32::WHITE),
+                                    ),
+                                );
+                            });
                         }
                     });
+
+                    ui.add_space(4.0);
+
+                    // --- BODY (vertically scrollable only) ---
+                    ScrollArea::vertical()
+                        .id_salt("dt_preview_vscroll")
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let mut body_tbl = TableBuilder::new(ui)
+                                .striped(true)
+                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+                                .resizable(true);
+                            for _ in 0..ncols {
+                                body_tbl = body_tbl.column(Column::initial(col_width).clip(true));
+                            }
+
+                            let row_h = 20.0;
+                            body_tbl.body(|body| {
+                                body.rows(row_h, fp.preview_rows.len(), |mut row| {
+                                    let r = &fp.preview_rows[row.index()];
+                                    // Ensure consistent column count: pad/truncate to headers length
+                                    for ci in 0..ncols {
+                                        row.col(|ui| {
+                                            let txt = r.get(ci).map(|s| s.as_str()).unwrap_or("");
+                                            // Single-line, clipped cell content
+                                            let label =
+                                                egui::Label::new(RichText::new(txt).size(12.0))
+                                                    .truncate();
+                                            ui.add_sized(egui::vec2(col_width, row_h - 2.0), label);
+                                        });
+                                    }
+                                });
+                            });
+                        });
+                });
             });
     }
 
