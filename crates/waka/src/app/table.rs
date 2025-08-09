@@ -78,43 +78,48 @@ impl DataTableArea {
         // Track legacy total rows update for self after we drop the fp borrow.
         let mut new_total_rows: Option<usize> = None;
 
-        match cfg.reader() {
-            Ok(mut rdr) => {
-                // headers: only (re)read into cache if empty
-                if fp.headers.is_empty() {
-                    if let Ok(hdrs) = rdr.headers() {
-                        fp.headers = hdrs.iter().map(ustr).collect();
-                    }
-                } else {
-                    // Ensure CSV header row is consumed so records() yields data rows.
-                    let _ = rdr.headers();
+        // Prefer using the qsv index for fast paging; fallback to streaming reader
+        if let Ok(Some(mut idx)) = cfg.indexed() {
+            // headers: only (re)read into cache if empty
+            if fp.headers.is_empty() {
+                if let Ok(hdrs) = idx.headers() {
+                    fp.headers = hdrs.iter().map(ustr).collect();
+                } else if let Ok(bhdrs) = idx.byte_headers() {
+                    fp.headers = bhdrs
+                        .iter()
+                        .map(|b| ustr(&String::from_utf8_lossy(b)))
+                        .collect();
                 }
+            }
 
-                // count rows once per file (if not already counted)
-                if fp.total_rows.is_none() {
-                    let total = Self::count_rows_for_path(&path_str);
-                    fp.total_rows = Some(total);
-                    new_total_rows = Some(total as usize); // update self after dropping fp
-                    // Clamp page within new total
-                    let total_pages =
-                        ((total as usize).saturating_add(rows_per_page - 1)) / rows_per_page;
-                    if total_pages == 0 {
-                        new_page = 0;
-                    } else if new_page >= total_pages {
-                        new_page = total_pages - 1;
-                    }
-                } else {
-                    new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
+            // count rows once per file (if not already counted)
+            if fp.total_rows.is_none() {
+                let total = Self::count_rows_for_path(&path_str);
+                fp.total_rows = Some(total);
+                new_total_rows = Some(total as usize); // update self after dropping fp
+                // Clamp page within new total
+                let total_pages =
+                    ((total as usize).saturating_add(rows_per_page - 1)) / rows_per_page;
+                if total_pages == 0 {
+                    new_page = 0;
+                } else if new_page >= total_pages {
+                    new_page = total_pages - 1;
                 }
+            } else {
+                new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
+            }
 
-                let start = new_page.saturating_mul(rows_per_page);
+            let start = new_page.saturating_mul(rows_per_page);
 
-                for rec_res in rdr.records().skip(start).take(rows_per_page) {
+            // Seek to the first record of the page and take only rows_per_page records
+            if let Err(e) = idx.seek(start as u64) {
+                fp.load_error = Some(ustr(&format!("Index seek error: {e}")));
+            } else {
+                for rec_res in idx.byte_records().take(rows_per_page) {
                     match rec_res {
-                        Ok(rec) => {
-                            // If we know header count, preallocate each row accordingly.
-                            let mut row = Vec::with_capacity(fp.headers.len().max(rec.len()));
-                            row.extend(rec.iter().map(ustr));
+                        Ok(brec) => {
+                            let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
+                            row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
                             fp.preview_rows.push(row);
                         }
                         Err(e) => {
@@ -124,8 +129,55 @@ impl DataTableArea {
                     }
                 }
             }
-            Err(e) => {
-                fp.load_error = Some(ustr(&format!("Unable to open file: {e}")));
+        } else {
+            match cfg.reader() {
+                Ok(mut rdr) => {
+                    // headers: only (re)read into cache if empty
+                    if fp.headers.is_empty() {
+                        if let Ok(hdrs) = rdr.headers() {
+                            fp.headers = hdrs.iter().map(ustr).collect();
+                        }
+                    } else {
+                        // Ensure CSV header row is consumed so records() yields data rows.
+                        let _ = rdr.headers();
+                    }
+
+                    // count rows once per file (if not already counted)
+                    if fp.total_rows.is_none() {
+                        let total = Self::count_rows_for_path(&path_str);
+                        fp.total_rows = Some(total);
+                        new_total_rows = Some(total as usize); // update self after dropping fp
+                        // Clamp page within new total
+                        let total_pages =
+                            ((total as usize).saturating_add(rows_per_page - 1)) / rows_per_page;
+                        if total_pages == 0 {
+                            new_page = 0;
+                        } else if new_page >= total_pages {
+                            new_page = total_pages - 1;
+                        }
+                    } else {
+                        new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
+                    }
+
+                    let start = new_page.saturating_mul(rows_per_page);
+
+                    for rec_res in rdr.records().skip(start).take(rows_per_page) {
+                        match rec_res {
+                            Ok(rec) => {
+                                let mut row = Vec::with_capacity(fp.headers.len().max(rec.len()));
+                                row.extend(rec.iter().map(ustr));
+                                fp.preview_rows.push(row);
+                            }
+                            Err(e) => {
+                                fp.load_error = Some(ustr(&format!("Row read error: {e}")));
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    fp.load_error = Some(ustr(&format!("Unable to open file: {e}")));
+                }
             }
         }
 

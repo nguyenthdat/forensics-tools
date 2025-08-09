@@ -2,7 +2,6 @@ use eframe::{
     NativeOptions,
     egui::{ViewportBuilder, Visuals},
 };
-// use std::{env, path::PathBuf};
 
 mod app;
 mod config;
@@ -16,9 +15,6 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const APP_TITLE: &str = "Waka Forensics Suite";
 
 fn main() -> eframe::Result<()> {
-    // let args: Vec<String> = env::args().collect();
-    // let file = args.get(1).map(PathBuf::from);
-
     let native_options = NativeOptions {
         viewport: ViewportBuilder::default()
             .with_title(APP_TITLE)
