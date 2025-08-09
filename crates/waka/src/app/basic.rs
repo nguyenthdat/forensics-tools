@@ -241,12 +241,18 @@ impl BasicEditor {
                 .corner_radius(CornerRadius::same(4))
                 .inner_margin(Margin::same(8))
                 .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new("File loaded, but no data rows were found.")
-                            .color(egui::Color32::from_rgb(200, 150, 150)),
-                    );
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("No rows match current filters.")
+                                .color(egui::Color32::from_rgb(200, 180, 150)),
+                        );
+                        if ui.button("Clear filters").clicked() {
+                            self.data_table.clear_all_filters_current_file();
+                            self.data_table.reload_current_preview_page();
+                        }
+                    });
                 });
-            return;
+            // Do not return: still render the table header + filter menus below
         }
 
         Frame::new()
