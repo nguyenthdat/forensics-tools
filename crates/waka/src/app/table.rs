@@ -376,6 +376,15 @@ impl DataTableArea {
         response
     }
 
+    // Draw a small circular file-type bullet (accent color)
+    fn filetype_bullet(ui: &mut Ui, color: Color32) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+        let painter = ui.painter();
+        let c = rect.center();
+        painter.circle_filled(c, 6.0, color);
+        painter.circle_stroke(c, 6.0, Stroke::new(1.0, Color32::from_white_alpha(80)));
+    }
+
     pub fn show_file_tabs(&mut self, ui: &mut Ui) {
         if self.files.is_empty() {
             return;
@@ -408,8 +417,9 @@ impl DataTableArea {
                                     Stroke::new(1.0, Color32::from_rgb(70, 70, 70))
                                 };
 
-                                // Modern VS Code–like tab with colored chip and close button
-                                Frame::new()
+                                // VS Code–style tab: flat body + top accent underline, keep your colors
+                                let accent = Color32::from_rgb(0, 120, 215); // keep current accent
+                                let ir = Frame::new()
                                     .fill(tab_fill)
                                     .stroke(tab_stroke)
                                     .corner_radius(CornerRadius {
@@ -418,45 +428,72 @@ impl DataTableArea {
                                         sw: 0,
                                         se: 0,
                                     })
-                                    .inner_margin(Margin::symmetric(10, 6))
+                                    .inner_margin(Margin::symmetric(10, 8))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
-                                            // Chip-style label
-                                            let chip_fill = if selected {
-                                                Color32::from_rgb(0, 120, 215) // VS Code accent
-                                            } else {
-                                                Color32::from_rgb(58, 58, 58)
-                                            };
-                                            let chip_text = if selected {
+                                            // left icon (small circular bullet)
+                                            Self::filetype_bullet(
+                                                ui,
+                                                if selected {
+                                                    accent
+                                                } else {
+                                                    Color32::from_rgb(130, 130, 130)
+                                                },
+                                            );
+                                            ui.add_space(6.0);
+
+                                            // filename label
+                                            let text_color = if selected {
                                                 Color32::WHITE
                                             } else {
-                                                Color32::from_rgb(220, 220, 220)
+                                                Color32::from_rgb(210, 210, 210)
                                             };
-
-                                            let chip = Button::new(
-                                                RichText::new(name).size(12.0).color(chip_text),
+                                            let label = egui::Label::new(
+                                                RichText::new(name.clone())
+                                                    .size(12.0)
+                                                    .color(text_color),
                                             )
-                                            .fill(chip_fill)
-                                            .stroke(Stroke::new(1.0, Color32::from_rgb(70, 70, 70)))
-                                            .corner_radius(CornerRadius::same(6));
-
-                                            let resp = ui.add(chip).on_hover_text(&*fp.file_path);
-
+                                            .truncate();
+                                            let resp = ui
+                                                .add_sized(egui::vec2(140.0, 16.0), label)
+                                                .on_hover_text(&*fp.file_path);
                                             if resp.clicked() {
                                                 clicked_idx = Some(idx);
                                             }
 
-                                            // Close button with fixed size; visible on hover or when selected
+                                            // Close button at far right
+                                            ui.add_space(8.0);
                                             let show_close = selected || resp.hovered();
-                                            ui.add_space(6.0);
                                             let close_resp = Self::close_button(ui, show_close)
                                                 .on_hover_text("Close");
-
                                             if close_resp.clicked() {
                                                 close_idx = Some(idx);
                                             }
                                         });
                                     });
+
+                                // Make the whole tab clickable
+                                let tab_hit = ui.interact(
+                                    ir.response.rect,
+                                    ui.id().with(("tab", idx)),
+                                    egui::Sense::click(),
+                                );
+                                if tab_hit.clicked() {
+                                    clicked_idx = Some(idx);
+                                }
+
+                                // Draw top accent underline for the active tab
+                                if selected {
+                                    let rect = ir.response.rect;
+                                    let y = rect.top() + 1.0;
+                                    ui.painter().line_segment(
+                                        [
+                                            egui::pos2(rect.left() + 6.0, y),
+                                            egui::pos2(rect.right() - 6.0, y),
+                                        ],
+                                        Stroke::new(2.0, accent),
+                                    );
+                                }
 
                                 ui.add_space(6.0);
                             }
