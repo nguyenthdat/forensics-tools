@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
@@ -30,6 +31,8 @@ pub struct ColumnFilter {
     pub regex_text: Ustr, // pattern text (persisted)
     #[serde(skip)]
     pub regex_error: Option<Ustr>, // last regex compile error (ui only)
+    #[serde(skip)]
+    pub compiled_regex: Option<Regex>, // cached compiled regex (ui/runtime only)
 }
 
 impl Default for ColumnFilter {
@@ -44,6 +47,30 @@ impl Default for ColumnFilter {
             use_regex: false,
             regex_text: ustr(""),
             regex_error: None,
+            compiled_regex: None,
+        }
+    }
+}
+
+impl ColumnFilter {
+    pub fn rebuild_regex(&mut self) {
+        if self.use_regex && !self.regex_text.is_empty() {
+            let mut b = RegexBuilder::new(self.regex_text.as_str());
+            b.case_insensitive(self.case_insensitive);
+            match b.build() {
+                Ok(rx) => {
+                    self.regex_error = None;
+                    self.compiled_regex = Some(rx);
+                }
+                Err(e) => {
+                    self.regex_error = Some(ustr(&e.to_string()));
+                    self.compiled_regex = None;
+                }
+            }
+        } else {
+            // When regex is disabled or pattern is empty, clear cache and error
+            self.compiled_regex = None;
+            self.regex_error = None;
         }
     }
 }
@@ -109,12 +136,10 @@ impl DataTableArea {
     /// Render the preview table with a header that stays pinned vertically
     /// while sharing the same horizontal scroll as the body.
     pub fn show_preview_table(&mut self, ui: &mut Ui) {
-        let (headers, rows) = match self.current_fp() {
-            Some(fp) => (fp.headers.clone(), fp.preview_rows.clone()),
+        let headers = match self.current_fp() {
+            Some(fp) => fp.headers.clone(),
             None => return,
         };
-        // Track if any filter popup is open this frame
-        let mut any_filter_popup_open = false;
         let col_width: f32 = 180.0;
         let ncols = headers.len().max(1);
 
@@ -179,7 +204,6 @@ impl DataTableArea {
                                         .width(btn_resp.rect.width())
                                         .show(|ui: &mut Ui| {
                                             ui.set_min_width(ui.available_width());
-                                            any_filter_popup_open = true;
                                             self.ensure_distinct_for_col(ci);
                                             if let Some(fp) = self.current_fp_mut() {
                                                 let f = &mut fp.filters[ci];
@@ -188,26 +212,15 @@ impl DataTableArea {
                                                 if f.use_regex {
                                                     let mut rbuf = f.regex_text.to_string();
                                                     let edited = ui
-                                                    .add(TextEdit::singleline(&mut rbuf).hint_text(
-                                                        "Regex pattern (e.g. ^foo.*bar$)",
-                                                    ))
-                                                    .changed();
+                                                        .add(TextEdit::singleline(&mut rbuf).hint_text(
+                                                            "Regex pattern (e.g. ^foo.*bar$)",
+                                                        ))
+                                                        .changed();
                                                     if edited {
                                                         f.regex_text = ustr(&rbuf);
-                                                        // Try to compile with current case setting; show error if invalid
-                                                        let mut b = RegexBuilder::new(
-                                                            f.regex_text.as_str(),
-                                                        );
-                                                        b.case_insensitive(f.case_insensitive);
-                                                        match b.build() {
-                                                            Ok(_) => {
-                                                                f.regex_error = None;
-                                                                apply_now = true;
-                                                            }
-                                                            Err(e) => {
-                                                                f.regex_error =
-                                                                    Some(ustr(&e.to_string()));
-                                                            }
+                                                        f.rebuild_regex();
+                                                        if f.regex_error.is_none() {
+                                                            apply_now = true;
                                                         }
                                                     }
                                                     if let Some(err) = &f.regex_error {
@@ -231,20 +244,20 @@ impl DataTableArea {
                                                     )
                                                     .changed()
                                                 {
+                                                    // Only update the local filter menu search; do NOT reload the table here
                                                     f.search = ustr(&buf);
-                                                    // Apply on typing, but reload is deferred by pending_reload
-                                                    apply_now = true;
                                                 }
                                                 ui.add_space(4.0);
 
-                                                let mut values: Vec<Ustr> =
-                                                    f.distinct_cache.clone().unwrap_or_default();
-                                                if !f.search.is_empty() {
-                                                    let s = f.search.as_str().to_ascii_lowercase();
-                                                    values.retain(|v| {
-                                                        v.as_str().to_ascii_lowercase().contains(&s)
-                                                    });
-                                                }
+                                                let values_slice: &[Ustr] =
+                                                    f.distinct_cache
+                                                        .as_ref()
+                                                        .map(|v| v.as_slice())
+                                                        .unwrap_or(&[]);
+                                                let search_lower = f
+                                                    .search
+                                                    .as_str()
+                                                    .to_ascii_lowercase();
 
                                                 let mut selected_set: std::collections::HashSet<
                                                     Ustr,
@@ -252,21 +265,25 @@ impl DataTableArea {
                                                 egui::ScrollArea::vertical()
                                                     .max_height(180.0)
                                                     .show(ui, |ui| {
-                                                        for val in values {
-                                                            let mut checked =
-                                                                selected_set.contains(&val);
+                                                        for val in values_slice.iter() {
+                                                            if !search_lower.is_empty()
+                                                                && !val
+                                                                    .as_str()
+                                                                    .to_ascii_lowercase()
+                                                                    .contains(&search_lower)
+                                                            {
+                                                                continue;
+                                                            }
+
+                                                            let mut checked = selected_set.contains(val);
                                                             if ui
-                                                                .checkbox(
-                                                                    &mut checked,
-                                                                    val.as_str(),
-                                                                )
+                                                                .checkbox(&mut checked, val.as_str())
                                                                 .clicked()
                                                             {
                                                                 if checked {
-                                                                    selected_set
-                                                                        .insert(val.clone());
+                                                                    selected_set.insert(val.clone());
                                                                 } else {
-                                                                    selected_set.remove(&val);
+                                                                    selected_set.remove(val);
                                                                 }
                                                                 // Apply immediately on item click
                                                                 apply_now = true;
@@ -283,20 +300,7 @@ impl DataTableArea {
                                                         .on_hover_text("Case-insensitive")
                                                         .changed()
                                                     {
-                                                        // Re-validate regex when case sensitivity changes
-                                                        if f.use_regex && !f.regex_text.is_empty() {
-                                                            let mut b = RegexBuilder::new(
-                                                                f.regex_text.as_str(),
-                                                            );
-                                                            b.case_insensitive(f.case_insensitive);
-                                                            match b.build() {
-                                                                Ok(_) => f.regex_error = None,
-                                                                Err(e) => {
-                                                                    f.regex_error =
-                                                                        Some(ustr(&e.to_string()))
-                                                                }
-                                                            }
-                                                        }
+                                                        f.rebuild_regex();
                                                         apply_now = true;
                                                     }
                                                     if ui
@@ -304,22 +308,7 @@ impl DataTableArea {
                                                         .on_hover_text("Use regex")
                                                         .changed()
                                                     {
-                                                        // Re-validate or clear error when toggling regex
-                                                        if f.use_regex && !f.regex_text.is_empty() {
-                                                            let mut b = RegexBuilder::new(
-                                                                f.regex_text.as_str(),
-                                                            );
-                                                            b.case_insensitive(f.case_insensitive);
-                                                            match b.build() {
-                                                                Ok(_) => f.regex_error = None,
-                                                                Err(e) => {
-                                                                    f.regex_error =
-                                                                        Some(ustr(&e.to_string()))
-                                                                }
-                                                            }
-                                                        } else {
-                                                            f.regex_error = None; // turning off regex clears any previous error
-                                                        }
+                                                        f.rebuild_regex();
                                                         apply_now = true;
                                                     }
                                                     ui.add_space(8.0);
@@ -372,20 +361,19 @@ impl DataTableArea {
 
                             let row_h = 20.0;
                             body_tbl.body(|body| {
-                                body.rows(row_h, rows.len(), |mut row| {
-                                    let r = &rows[row.index()];
-                                    // Ensure consistent column count: pad/truncate to headers length
-                                    for ci in 0..ncols {
-                                        row.col(|ui| {
-                                            let txt = r.get(ci).map(|s| s.as_str()).unwrap_or("");
-                                            // Single-line, clipped cell content
-                                            let label =
-                                                egui::Label::new(RichText::new(txt).size(12.0))
-                                                    .truncate();
-                                            ui.add_sized(egui::vec2(col_width, row_h - 2.0), label);
-                                        });
-                                    }
-                                });
+                                if let Some(fp_ref) = self.current_fp() {
+                                    let rows_ref = &fp_ref.preview_rows;
+                                    body.rows(row_h, rows_ref.len(), |mut row| {
+                                        let r = &rows_ref[row.index()];
+                                        for ci in 0..ncols {
+                                            row.col(|ui| {
+                                                let txt = r.get(ci).map(|s| s.as_str()).unwrap_or("");
+                                                let label = egui::Label::new(RichText::new(txt).size(12.0)).truncate();
+                                                ui.add_sized(egui::vec2(col_width, row_h - 2.0), label);
+                                            });
+                                        }
+                                    });
+                                }
                             });
                         });
                     // If something else scheduled a reload, run it even while the popup is open.
@@ -1047,17 +1035,7 @@ impl DataTableArea {
             };
 
             let rx = if f.use_regex {
-                let pat = f.regex_text.as_str();
-                if !pat.is_empty() {
-                    let mut b = RegexBuilder::new(pat);
-                    b.case_insensitive(casei);
-                    match b.build() {
-                        Ok(r) => Some(r),
-                        Err(_) => None, // ignore invalid regex at apply time
-                    }
-                } else {
-                    None
-                }
+                f.compiled_regex.clone()
             } else {
                 None
             };
@@ -1082,21 +1060,21 @@ impl DataTableArea {
                 if let Ok(brec) = rec_res {
                     let mut keep = true;
                     for (col, set, casei, rx) in active.iter() {
-                        let val = brec
+                        let val_cow: Cow<'_, str> = brec
                             .get(*col)
-                            .map(|b| String::from_utf8_lossy(b).into_owned())
-                            .unwrap_or_default();
+                            .map(|b| String::from_utf8_lossy(b))
+                            .unwrap_or(Cow::Borrowed(""));
                         // If there are selected values, enforce membership
                         if !set.is_empty() {
-                            let key = util::norm(&val, *casei);
+                            let key = util::norm(val_cow.as_ref(), *casei);
                             if !set.contains(key.as_ref()) {
                                 keep = false;
                                 break;
                             }
                         }
                         // If a regex is active, enforce regex match (on original value)
-                        if let Some(r) = rx {
-                            if !r.is_match(&val) {
+                        if let Some(r) = rx.as_ref() {
+                            if !r.is_match(val_cow.as_ref()) {
                                 keep = false;
                                 break;
                             }
