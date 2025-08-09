@@ -714,14 +714,27 @@ impl DataTableArea {
         ui.add_space(4.0);
     }
 
+    pub fn clear_all_filters_current_file(&mut self) {
+        if let Some(fp) = self.current_fp_mut() {
+            for f in &mut fp.filters {
+                f.enabled = false;
+                f.selected.clear();
+                f.search = ustr("");
+            }
+            fp.filtered_indices = None;
+            fp.page = 0;
+        }
+    }
+
     pub fn show_pagination_controls(&mut self, ui: &mut Ui) {
         {
             // Pull current values without holding a mutable borrow during UI
             let (mut page, total_rows) = match self.current_fp() {
-                Some(fp) => (
-                    fp.page,
-                    fp.total_rows.unwrap_or(self.toal_rows as u64) as usize,
-                ),
+                Some(fp) => {
+                    let filtered = fp.filtered_indices.as_ref().map(|v| v.len());
+                    let base_total = fp.total_rows.unwrap_or(self.toal_rows as u64) as usize;
+                    (fp.page, filtered.unwrap_or(base_total))
+                }
                 None => return,
             };
             let rows_per_page = self.rows_per_page;

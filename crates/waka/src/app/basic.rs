@@ -163,18 +163,17 @@ impl BasicEditor {
 
     pub fn show_results_placeholder(&mut self, ui: &mut Ui) {
         if self.data_table.files.is_empty() {
-            // (Keep original block; omitted here for brevity)
-            // BEGIN unchanged placeholder
             let (rect, _resp) = ui.allocate_exact_size(
                 egui::Vec2::new(ui.available_width(), 180.0),
                 egui::Sense::hover(),
             );
-            let hovering_files = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
-            let dropping_files = ui.ctx().input(|i| !i.raw.dropped_files.is_empty());
+            // Drag & drop state from egui input
+            let dragging_files_in = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
+            let files_being_dropped_now = ui.ctx().input(|i| !i.raw.dropped_files.is_empty());
 
-            let bg = if dropping_files {
+            let bg = if files_being_dropped_now {
                 Color32::from_rgb(30, 70, 30)
-            } else if hovering_files {
+            } else if dragging_files_in {
                 Color32::from_rgb(50, 50, 50)
             } else {
                 Color32::from_rgb(45, 45, 45)
@@ -183,9 +182,10 @@ impl BasicEditor {
             let stroke = Stroke::new(1.0, Color32::from_gray(90));
             ui.painter().rect(rect, 6.0, bg, stroke, StrokeKind::Inside);
 
-            let text = if dropping_files {
+            // Show explicit prompt while a file is being dragged in
+            let text = if files_being_dropped_now {
                 "Release to load CSV with first 50 rows preview"
-            } else if hovering_files {
+            } else if dragging_files_in {
                 "Drop CSV file(s) to preview first 50 rows"
             } else {
                 "📁 Drag & drop CSV file(s) here to preview first 50 rows (slice 0..50)"
@@ -201,7 +201,6 @@ impl BasicEditor {
                 .wrap(),
             );
             // Show most recent load error (none yet)
-            // END placeholder
             return;
         }
 
