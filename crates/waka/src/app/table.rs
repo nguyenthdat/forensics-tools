@@ -1,5 +1,5 @@
 use bon::Builder;
-use eframe::egui::{self, Button, Frame, RichText, ScrollArea, Ui};
+use eframe::egui::{self, Button, DragValue, Frame, RichText, ScrollArea, Ui};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
 use serde::{Deserialize, Serialize};
@@ -13,18 +13,128 @@ pub struct FilePreview {
     pub file_path: Ustr,
     pub headers: Vec<Ustr>,
     pub preview_rows: Vec<Vec<Ustr>>,
+    pub total_rows: Option<u64>,
     pub load_error: Option<Ustr>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Builder, Default)]
-
+#[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct DataTableArea {
     pub files: Vec<FilePreview>,
     pub current_file: usize,
-    pub toal_rows: usize,
+    pub toal_rows: usize, // kept for backward-compat
+    pub rows_per_page: usize,
+    pub page: usize, // 0-based
+}
+
+impl Default for DataTableArea {
+    fn default() -> Self {
+        Self {
+            files: Vec::new(),
+            current_file: 0,
+            toal_rows: 0,
+            rows_per_page: 50,
+            page: 0,
+        }
+    }
 }
 
 impl DataTableArea {
+    fn count_rows_for_path(path: &str) -> u64 {
+        let cfg = Config::new(Some(&path.to_string()));
+        // Try index first
+        if let Ok(Some(idx)) = cfg.indexed() {
+            return idx.count();
+        }
+        // Fallback: scan the file
+        if let Ok(mut rdr) = cfg.reader() {
+            let mut cnt: u64 = 0;
+            for rec in rdr.records() {
+                if rec.is_ok() {
+                    cnt = cnt.saturating_add(1);
+                }
+            }
+            cnt
+        } else {
+            0
+        }
+    }
+
+    pub fn reload_current_preview_page(&mut self) {
+        // Work with locals to avoid borrowing conflicts while updating self later.
+        let mut new_page = self.page;
+        let rows_per_page = self.rows_per_page;
+
+        let Some(fp) = self.current_fp_mut() else {
+            return;
+        };
+        let path_str = fp.file_path.to_string();
+        let cfg = Config::new(Some(&path_str));
+
+        // Ensure headers
+        fp.headers.clear();
+        fp.preview_rows.clear();
+
+        // Track legacy total rows update for self after we drop the fp borrow.
+        let mut new_total_rows: Option<usize> = None;
+
+        match cfg.reader() {
+            Ok(mut rdr) => {
+                // headers
+                if let Ok(hdrs) = rdr.headers() {
+                    fp.headers = hdrs.iter().map(|s| ustr(s)).collect();
+                }
+
+                // count rows once per file (if not already counted)
+                if fp.total_rows.is_none() {
+                    let total = Self::count_rows_for_path(&path_str);
+                    fp.total_rows = Some(total);
+                    new_total_rows = Some(total as usize); // update self after dropping fp
+                    // Clamp page within new total
+                    let total_pages =
+                        ((total as usize).saturating_add(rows_per_page - 1)) / rows_per_page;
+                    if total_pages == 0 {
+                        new_page = 0;
+                    } else if new_page >= total_pages {
+                        new_page = total_pages - 1;
+                    }
+                } else {
+                    new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
+                }
+
+                let start = new_page.saturating_mul(rows_per_page);
+                let end = start.saturating_add(rows_per_page);
+
+                // Skip to start and take up to rows_per_page
+                for (i, rec_res) in rdr.records().enumerate() {
+                    if i < start {
+                        continue;
+                    }
+                    if i >= end {
+                        break;
+                    }
+                    match rec_res {
+                        Ok(rec) => fp.preview_rows.push(rec.iter().map(|s| ustr(s)).collect()),
+                        Err(e) => {
+                            fp.load_error = Some(ustr(&format!("Row read error: {e}")));
+                            break;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                fp.load_error = Some(ustr(&format!("Unable to open file: {e}")));
+            }
+        }
+
+        // End the mutable borrow of the file before mutating other fields on self.
+        let _ = fp;
+
+        if let Some(tr) = new_total_rows {
+            self.toal_rows = tr; // keep legacy field updated
+        }
+        self.page = new_page;
+    }
+
     pub fn handle_file_drop(&mut self, ctx: &egui::Context) {
         // Accept multiple files now
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
@@ -34,6 +144,7 @@ impl DataTableArea {
         for f in dropped {
             if let Some(path) = f.path {
                 self.load_preview(path);
+                self.page = 0;
             }
         }
     }
@@ -49,11 +160,11 @@ impl DataTableArea {
     pub fn load_preview(&mut self, path: PathBuf) {
         let file_path = Ustr::from(&path.to_string_lossy());
         // Avoid reloading same file
-        if self.files.iter().any(|fp| fp.file_path == file_path) {
-            // Switch to it
-            if let Some(idx) = self.files.iter().position(|fp| fp.file_path == file_path) {
-                self.current_file = idx;
-            }
+        if let Some(idx) = self.files.iter().position(|fp| fp.file_path == file_path) {
+            self.current_file = idx;
+            // refresh preview for current pagination settings
+            self.page = 0; // reset to first page when reselecting
+            self.reload_current_preview_page();
             return;
         }
 
@@ -61,32 +172,44 @@ impl DataTableArea {
             file_path,
             headers: Vec::new(),
             preview_rows: Vec::new(),
+            total_rows: None,
             load_error: None,
         };
 
-        let cfg = Config::new(Some(&file_path.to_string()));
+        // Count first so we can clamp paging appropriately
+        let total = Self::count_rows_for_path(&fp.file_path.to_string());
+        fp.total_rows = Some(total);
+        self.toal_rows = total as usize;
+        self.page = 0;
+
+        let cfg = Config::new(Some(&fp.file_path.to_string()));
         match cfg.reader() {
             Ok(mut rdr) => {
-                match rdr.headers() {
-                    Ok(hdrs) => {
-                        fp.headers = hdrs.iter().map(|s| ustr(s)).collect();
-                    }
-                    Err(e) => {
-                        fp.load_error = Some(ustr(&format!("Cannot read headers: {e}")));
-                    }
+                if let Ok(hdrs) = rdr.headers() {
+                    fp.headers = hdrs.iter().map(|s| ustr(s)).collect();
+                } else {
+                    fp.load_error = Some(ustr("Cannot read headers"));
                 }
+
                 if fp.load_error.is_none() {
-                    for rec_res in rdr.records().take(50) {
+                    let start = 0usize;
+                    let end = self.rows_per_page;
+                    for (i, rec_res) in rdr.records().enumerate() {
+                        if i < start {
+                            continue;
+                        }
+                        if i >= end {
+                            break;
+                        }
                         match rec_res {
-                            Ok(rec) => {
-                                fp.preview_rows.push(rec.iter().map(|s| ustr(s)).collect());
-                            }
+                            Ok(rec) => fp.preview_rows.push(rec.iter().map(|s| ustr(s)).collect()),
                             Err(e) => {
                                 fp.load_error = Some(ustr(&format!("Row read error: {e}")));
                                 break;
                             }
                         }
                     }
+
                     if fp.preview_rows.is_empty() && fp.load_error.is_none() {
                         fp.load_error = Some(ustr("No data rows found."));
                     }
@@ -178,6 +301,7 @@ impl DataTableArea {
 
                         if let Some(i) = clicked_idx {
                             self.current_file = i;
+                            self.reload_current_preview_page();
                         }
 
                         if let Some(i) = close_idx {
@@ -190,10 +314,98 @@ impl DataTableArea {
                             } else if self.current_file > i {
                                 self.current_file -= 1;
                             }
+                            self.reload_current_preview_page();
                         }
                     });
             });
 
         ui.add_space(6.0);
+    }
+
+    pub fn show_pagination_controls(&mut self, ui: &mut Ui) {
+        let Some(fp) = self.current_fp() else {
+            return;
+        };
+        let total_rows = fp.total_rows.unwrap_or(self.toal_rows as u64) as usize;
+        let total_pages = if self.rows_per_page == 0 {
+            0
+        } else {
+            (total_rows + self.rows_per_page - 1) / self.rows_per_page
+        };
+
+        ui.horizontal(|ui| {
+            // Page navigation
+            let mut reload_needed = false;
+
+            if ui
+                .add_enabled(self.page > 0, Button::new("⏮ First"))
+                .clicked()
+            {
+                self.page = 0;
+                reload_needed = true;
+            }
+            if ui
+                .add_enabled(self.page > 0, Button::new("◀ Prev"))
+                .clicked()
+            {
+                self.page = self.page.saturating_sub(1);
+                reload_needed = true;
+            }
+            ui.label(format!(
+                "Page {}/{}",
+                if total_pages == 0 { 0 } else { self.page + 1 },
+                total_pages.max(1)
+            ));
+            if ui
+                .add_enabled(self.page + 1 < total_pages, Button::new("Next ▶"))
+                .clicked()
+            {
+                self.page += 1;
+                reload_needed = true;
+            }
+            if ui
+                .add_enabled(self.page + 1 < total_pages, Button::new("Last ⏭"))
+                .clicked()
+            {
+                if total_pages > 0 {
+                    self.page = total_pages - 1;
+                }
+                reload_needed = true;
+            }
+
+            ui.separator();
+
+            // Rows per page controls
+            ui.label("Rows/page:");
+            let mut rpp_changed = false;
+            if ui.button("–").clicked() {
+                if self.rows_per_page > 5 {
+                    self.rows_per_page = (self.rows_per_page - 5).max(5);
+                    rpp_changed = true;
+                }
+            }
+            let mut rpp = self.rows_per_page as i64;
+            let r = ui.add(DragValue::new(&mut rpp).range(5..=5000).speed(1));
+            if r.changed() {
+                self.rows_per_page = rpp as usize;
+                rpp_changed = true;
+            }
+            if ui.button("+").clicked() {
+                self.rows_per_page = (self.rows_per_page + 5).min(5000);
+                rpp_changed = true;
+            }
+
+            if rpp_changed {
+                self.page = 0;
+                reload_needed = true;
+            }
+
+            ui.separator();
+            ui.label(format!("Rows: {}", total_rows));
+
+            if reload_needed {
+                self.reload_current_preview_page();
+            }
+        });
     }
 }

@@ -270,6 +270,7 @@ impl SqlEditor {
                 ui.vertical(|ui| {
                     // File tabs
                     self.data_table.show_file_tabs(ui);
+                    self.data_table.show_pagination_controls(ui);
 
                     // Table controls
                     self.show_table_controls(ui);
