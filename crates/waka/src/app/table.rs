@@ -344,9 +344,11 @@ impl DataTableArea {
                                         });
 
                                     if apply_now || clear_now {
-                                        // Apply filter changes immediately but defer the heavy table reload
+                                        // Apply filter changes immediately and refresh the table now.
+                                        // Popup stays open thanks to persistent popup id + open_memory.
                                         self.apply_filters_for_current_file();
-                                        self.pending_reload = true;
+                                        self.reload_current_preview_page();
+                                        self.pending_reload = false;
                                     }
                                 });
                             });
@@ -386,8 +388,8 @@ impl DataTableArea {
                                 });
                             });
                         });
-                    // If any filter popup is open, keep the table stable so typing/clicking doesn't close it.
-                    if self.pending_reload && !any_filter_popup_open {
+                    // If something else scheduled a reload, run it even while the popup is open.
+                    if self.pending_reload {
                         self.reload_current_preview_page();
                         self.pending_reload = false;
                     }
