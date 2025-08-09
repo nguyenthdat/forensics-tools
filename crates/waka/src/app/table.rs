@@ -2,7 +2,10 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
 use bon::Builder;
-use eframe::egui::{self, Button, DragValue, Frame, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{
+    self, Button, DragValue, Frame, Popup, PopupCloseBehavior, RichText, ScrollArea, TextEdit, Ui,
+    popup_below_widget,
+};
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
@@ -161,169 +164,182 @@ impl DataTableArea {
                                         } else {
                                             Color32::from_gray(230)
                                         });
-                                    ui.menu_button(btn_text, |ui| {
-                                        any_filter_popup_open = true;
-                                        self.ensure_distinct_for_col(ci);
-                                        if let Some(fp) = self.current_fp_mut() {
-                                            let f = &mut fp.filters[ci];
+                                    let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
+                                    let btn_resp = ui.add(Button::new(btn_text));
+                                    if btn_resp.clicked() {
+                                        Popup::toggle_id(ui.ctx(), popup_id);
+                                    }
 
-                                            // Sticky top controls: case sensitivity + regex
-                                            ui.horizontal(|ui| {
-                                                if ui
-                                                    .checkbox(&mut f.case_insensitive, "Aa")
-                                                    .on_hover_text("Case-insensitive")
-                                                    .changed()
-                                                {
-                                                    apply_now = true;
-                                                }
-                                                if ui
-                                                    .checkbox(&mut f.use_regex, ".*")
-                                                    .on_hover_text("Use regex filter")
-                                                    .changed()
-                                                {
-                                                    // Re-validate the current pattern when toggled
-                                                    if f.use_regex && !f.regex_text.is_empty() {
+                                    popup_below_widget(
+                                        ui,
+                                        popup_id,
+                                        &btn_resp,
+                                        PopupCloseBehavior::CloseOnClickOutside,
+                                        |ui: &mut Ui| {
+                                            any_filter_popup_open = true;
+                                            self.ensure_distinct_for_col(ci);
+                                            if let Some(fp) = self.current_fp_mut() {
+                                                let f = &mut fp.filters[ci];
+
+                                                // (Top toggles removed — only bottom ones remain.)
+                                                if f.use_regex {
+                                                    let mut rbuf = f.regex_text.to_string();
+                                                    let edited = ui
+                                                    .add(TextEdit::singleline(&mut rbuf).hint_text(
+                                                        "Regex pattern (e.g. ^foo.*bar$)",
+                                                    ))
+                                                    .changed();
+                                                    if edited {
+                                                        f.regex_text = ustr(&rbuf);
+                                                        // Try to compile with current case setting; show error if invalid
                                                         let mut b = RegexBuilder::new(
                                                             f.regex_text.as_str(),
                                                         );
                                                         b.case_insensitive(f.case_insensitive);
                                                         match b.build() {
-                                                            Ok(_) => f.regex_error = None,
+                                                            Ok(_) => {
+                                                                f.regex_error = None;
+                                                                apply_now = true;
+                                                            }
                                                             Err(e) => {
                                                                 f.regex_error =
-                                                                    Some(ustr(&e.to_string()))
+                                                                    Some(ustr(&e.to_string()));
                                                             }
                                                         }
                                                     }
-                                                    apply_now = true;
-                                                }
-                                            });
-                                            ui.add_space(4.0);
-
-                                            if f.use_regex {
-                                                let mut rbuf = f.regex_text.to_string();
-                                                let edited = ui
-                                                    .add(TextEdit::singleline(&mut rbuf).hint_text(
-                                                        "Regex pattern (e.g. ^foo.*bar$)",
-                                                    ))
-                                                    .changed();
-                                                if edited {
-                                                    f.regex_text = ustr(&rbuf);
-                                                    // Try to compile with current case setting; show error if invalid
-                                                    let mut b =
-                                                        RegexBuilder::new(f.regex_text.as_str());
-                                                    b.case_insensitive(f.case_insensitive);
-                                                    match b.build() {
-                                                        Ok(_) => {
-                                                            f.regex_error = None;
-                                                            apply_now = true;
-                                                        }
-                                                        Err(e) => {
-                                                            f.regex_error =
-                                                                Some(ustr(&e.to_string()));
-                                                        }
+                                                    if let Some(err) = &f.regex_error {
+                                                        ui.label(
+                                                            RichText::new(format!(
+                                                                "⚠ Invalid regex: {}",
+                                                                err
+                                                            ))
+                                                            .color(Color32::from_rgb(220, 90, 90))
+                                                            .size(11.0),
+                                                        );
                                                     }
+                                                    ui.add_space(4.0);
                                                 }
-                                                if let Some(err) = &f.regex_error {
-                                                    ui.label(
-                                                        RichText::new(format!(
-                                                            "⚠ Invalid regex: {}",
-                                                            err
-                                                        ))
-                                                        .color(Color32::from_rgb(220, 90, 90))
-                                                        .size(11.0),
-                                                    );
+
+                                                let mut buf = f.search.to_string();
+                                                if ui
+                                                    .add(
+                                                        TextEdit::singleline(&mut buf)
+                                                            .hint_text("Search values..."),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    f.search = ustr(&buf);
+                                                    // Apply on typing, but reload is deferred by pending_reload
+                                                    apply_now = true;
                                                 }
                                                 ui.add_space(4.0);
-                                            }
 
-                                            let mut buf = f.search.to_string();
-                                            if ui
-                                                .add(
-                                                    TextEdit::singleline(&mut buf)
-                                                        .hint_text("Search values..."),
-                                                )
-                                                .changed()
-                                            {
-                                                f.search = ustr(&buf);
-                                                // Apply on typing, but reload is deferred by pending_reload
-                                                apply_now = true;
-                                            }
-                                            ui.add_space(4.0);
+                                                let mut values: Vec<Ustr> =
+                                                    f.distinct_cache.clone().unwrap_or_default();
+                                                if !f.search.is_empty() {
+                                                    let s = f.search.as_str().to_ascii_lowercase();
+                                                    values.retain(|v| {
+                                                        v.as_str().to_ascii_lowercase().contains(&s)
+                                                    });
+                                                }
 
-                                            let mut values: Vec<Ustr> =
-                                                f.distinct_cache.clone().unwrap_or_default();
-                                            if !f.search.is_empty() {
-                                                let s = f.search.as_str().to_ascii_lowercase();
-                                                values.retain(|v| {
-                                                    v.as_str().to_ascii_lowercase().contains(&s)
+                                                let mut selected_set: std::collections::HashSet<
+                                                    Ustr,
+                                                > = f.selected.iter().cloned().collect();
+                                                egui::ScrollArea::vertical()
+                                                    .max_height(180.0)
+                                                    .show(ui, |ui| {
+                                                        for val in values {
+                                                            let mut checked =
+                                                                selected_set.contains(&val);
+                                                            if ui
+                                                                .checkbox(
+                                                                    &mut checked,
+                                                                    val.as_str(),
+                                                                )
+                                                                .clicked()
+                                                            {
+                                                                if checked {
+                                                                    selected_set
+                                                                        .insert(val.clone());
+                                                                } else {
+                                                                    selected_set.remove(&val);
+                                                                }
+                                                                // Apply immediately on item click
+                                                                apply_now = true;
+                                                            }
+                                                        }
+                                                    });
+                                                f.selected = selected_set.into_iter().collect();
+
+                                                ui.separator();
+                                                ui.horizontal(|ui| {
+                                                    // Sticky toggles at bottom
+                                                    if ui
+                                                        .checkbox(&mut f.case_insensitive, "Aa")
+                                                        .on_hover_text("Case-insensitive")
+                                                        .changed()
+                                                    {
+                                                        // Re-validate regex when case sensitivity changes
+                                                        if f.use_regex && !f.regex_text.is_empty() {
+                                                            let mut b = RegexBuilder::new(
+                                                                f.regex_text.as_str(),
+                                                            );
+                                                            b.case_insensitive(f.case_insensitive);
+                                                            match b.build() {
+                                                                Ok(_) => f.regex_error = None,
+                                                                Err(e) => {
+                                                                    f.regex_error =
+                                                                        Some(ustr(&e.to_string()))
+                                                                }
+                                                            }
+                                                        }
+                                                        apply_now = true;
+                                                    }
+                                                    if ui
+                                                        .checkbox(&mut f.use_regex, ".*")
+                                                        .on_hover_text("Use regex")
+                                                        .changed()
+                                                    {
+                                                        // Re-validate or clear error when toggling regex
+                                                        if f.use_regex && !f.regex_text.is_empty() {
+                                                            let mut b = RegexBuilder::new(
+                                                                f.regex_text.as_str(),
+                                                            );
+                                                            b.case_insensitive(f.case_insensitive);
+                                                            match b.build() {
+                                                                Ok(_) => f.regex_error = None,
+                                                                Err(e) => {
+                                                                    f.regex_error =
+                                                                        Some(ustr(&e.to_string()))
+                                                                }
+                                                            }
+                                                        } else {
+                                                            f.regex_error = None; // turning off regex clears any previous error
+                                                        }
+                                                        apply_now = true;
+                                                    }
+                                                    ui.add_space(8.0);
+
+                                                    if ui.button("Select all").clicked() {
+                                                        if let Some(all) = &f.distinct_cache {
+                                                            f.selected = all.clone();
+                                                        }
+                                                        // Apply immediately but keep popup open
+                                                        apply_now = true;
+                                                    }
+                                                    if ui.button("Clear").clicked() {
+                                                        f.selected.clear();
+                                                        // Apply immediately but keep popup open
+                                                        clear_now = true;
+                                                    }
+                                                    if ui.button("Apply").clicked() {
+                                                        apply_now = true;
+                                                    }
                                                 });
                                             }
-
-                                            let mut selected_set: std::collections::HashSet<Ustr> =
-                                                f.selected.iter().cloned().collect();
-
-                                            egui::ScrollArea::vertical().max_height(180.0).show(
-                                                ui,
-                                                |ui| {
-                                                    for val in values {
-                                                        let mut checked =
-                                                            selected_set.contains(&val);
-                                                        if ui
-                                                            .checkbox(&mut checked, val.as_str())
-                                                            .clicked()
-                                                        {
-                                                            if checked {
-                                                                selected_set.insert(val.clone());
-                                                            } else {
-                                                                selected_set.remove(&val);
-                                                            }
-                                                            // Apply immediately on item click
-                                                            apply_now = true;
-                                                        }
-                                                    }
-                                                },
-                                            );
-
-                                            f.selected = selected_set.into_iter().collect();
-
-                                            ui.separator();
-                                            ui.horizontal(|ui| {
-                                                // Sticky toggles at bottom too
-                                                if ui
-                                                    .checkbox(&mut f.case_insensitive, "Aa")
-                                                    .on_hover_text("Case-insensitive")
-                                                    .changed()
-                                                {
-                                                    apply_now = true;
-                                                }
-                                                if ui
-                                                    .checkbox(&mut f.use_regex, ".*")
-                                                    .on_hover_text("Use regex")
-                                                    .changed()
-                                                {
-                                                    apply_now = true;
-                                                }
-                                                ui.add_space(8.0);
-
-                                                if ui.button("Select all").clicked() {
-                                                    if let Some(all) = &f.distinct_cache {
-                                                        f.selected = all.clone();
-                                                    }
-                                                    // Apply immediately but keep popup open
-                                                    apply_now = true;
-                                                }
-                                                if ui.button("Clear").clicked() {
-                                                    f.selected.clear();
-                                                    // Apply immediately but keep popup open
-                                                    clear_now = true;
-                                                }
-                                                if ui.button("Apply").clicked() {
-                                                    apply_now = true;
-                                                }
-                                            });
-                                        }
-                                    });
+                                        },
+                                    );
 
                                     if apply_now || clear_now {
                                         // Apply filter changes immediately but defer the heavy table reload
