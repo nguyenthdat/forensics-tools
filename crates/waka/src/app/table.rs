@@ -13,6 +13,7 @@ pub struct FilePreview {
     pub file_path: Ustr,
     pub headers: Vec<Ustr>,
     pub preview_rows: Vec<Vec<Ustr>>,
+    pub page: usize, // 0-based, per-file current page
     pub total_rows: Option<u64>,
     pub load_error: Option<Ustr>,
 }
@@ -61,12 +62,12 @@ impl DataTableArea {
 
     pub fn reload_current_preview_page(&mut self) {
         // Work with locals to avoid borrowing conflicts while updating self later.
-        let mut new_page = self.page;
         let rows_per_page = self.rows_per_page;
 
         let Some(fp) = self.current_fp_mut() else {
             return;
         };
+        let mut new_page = fp.page;
         let path_str = fp.file_path.to_string();
         let cfg = Config::new(Some(&path_str));
 
@@ -127,12 +128,12 @@ impl DataTableArea {
         }
 
         // End the mutable borrow of the file before mutating other fields on self.
+        fp.page = new_page;
         let _ = fp;
 
         if let Some(tr) = new_total_rows {
             self.toal_rows = tr; // keep legacy field updated
         }
-        self.page = new_page;
     }
 
     pub fn handle_file_drop(&mut self, ctx: &egui::Context) {
@@ -144,7 +145,6 @@ impl DataTableArea {
         for f in dropped {
             if let Some(path) = f.path {
                 self.load_preview(path);
-                self.page = 0;
             }
         }
     }
@@ -172,6 +172,7 @@ impl DataTableArea {
             file_path,
             headers: Vec::new(),
             preview_rows: Vec::new(),
+            page: 0,
             total_rows: None,
             load_error: None,
         };
@@ -357,89 +358,95 @@ impl DataTableArea {
     }
 
     pub fn show_pagination_controls(&mut self, ui: &mut Ui) {
-        let Some(fp) = self.current_fp() else {
-            return;
-        };
-        let total_rows = fp.total_rows.unwrap_or(self.toal_rows as u64) as usize;
-        let total_pages = if self.rows_per_page == 0 {
-            0
-        } else {
-            (total_rows + self.rows_per_page - 1) / self.rows_per_page
-        };
+        {
+            // Pull current values without holding a mutable borrow during UI
+            let (mut page, total_rows) = match self.current_fp() {
+                Some(fp) => (
+                    fp.page,
+                    fp.total_rows.unwrap_or(self.toal_rows as u64) as usize,
+                ),
+                None => return,
+            };
+            let rows_per_page = self.rows_per_page;
+            let total_pages = if rows_per_page == 0 {
+                0
+            } else {
+                (total_rows + rows_per_page - 1) / rows_per_page
+            };
 
-        ui.horizontal(|ui| {
-            // Page navigation
             let mut reload_needed = false;
 
-            if ui
-                .add_enabled(self.page > 0, Button::new("⏮ First"))
-                .clicked()
-            {
-                self.page = 0;
-                reload_needed = true;
-            }
-            if ui
-                .add_enabled(self.page > 0, Button::new("◀ Prev"))
-                .clicked()
-            {
-                self.page = self.page.saturating_sub(1);
-                reload_needed = true;
-            }
-            ui.label(format!(
-                "Page {}/{}",
-                if total_pages == 0 { 0 } else { self.page + 1 },
-                total_pages.max(1)
-            ));
-            if ui
-                .add_enabled(self.page + 1 < total_pages, Button::new("Next ▶"))
-                .clicked()
-            {
-                self.page += 1;
-                reload_needed = true;
-            }
-            if ui
-                .add_enabled(self.page + 1 < total_pages, Button::new("Last ⏭"))
-                .clicked()
-            {
-                if total_pages > 0 {
-                    self.page = total_pages - 1;
+            ui.horizontal(|ui| {
+                // Page navigation
+                if ui.add_enabled(page > 0, Button::new("⏮ First")).clicked() {
+                    page = 0;
+                    reload_needed = true;
                 }
-                reload_needed = true;
-            }
+                if ui.add_enabled(page > 0, Button::new("◀ Prev")).clicked() {
+                    page = page.saturating_sub(1);
+                    reload_needed = true;
+                }
+                ui.label(format!(
+                    "Page {}/{}",
+                    if total_pages == 0 { 0 } else { page + 1 },
+                    total_pages.max(1)
+                ));
+                if ui
+                    .add_enabled(page + 1 < total_pages, Button::new("Next ▶"))
+                    .clicked()
+                {
+                    page += 1;
+                    reload_needed = true;
+                }
+                if ui
+                    .add_enabled(page + 1 < total_pages, Button::new("Last ⏭"))
+                    .clicked()
+                {
+                    if total_pages > 0 {
+                        page = total_pages - 1;
+                    }
+                    reload_needed = true;
+                }
 
-            ui.separator();
+                ui.separator();
 
-            // Rows per page controls
-            ui.label("Rows/page:");
-            let mut rpp_changed = false;
-            if ui.button("–").clicked() {
-                if self.rows_per_page > 5 {
-                    self.rows_per_page = (self.rows_per_page - 5).max(5);
+                // Rows per page controls
+                ui.label("Rows/page:");
+                let mut rpp_changed = false;
+                if ui.button("–").clicked() {
+                    if self.rows_per_page > 5 {
+                        self.rows_per_page = (self.rows_per_page - 5).max(5);
+                        rpp_changed = true;
+                    }
+                }
+                let mut rpp = self.rows_per_page as i64;
+                let r = ui.add(DragValue::new(&mut rpp).range(5..=5000).speed(1));
+                if r.changed() {
+                    self.rows_per_page = rpp as usize;
                     rpp_changed = true;
                 }
-            }
-            let mut rpp = self.rows_per_page as i64;
-            let r = ui.add(DragValue::new(&mut rpp).range(5..=5000).speed(1));
-            if r.changed() {
-                self.rows_per_page = rpp as usize;
-                rpp_changed = true;
-            }
-            if ui.button("+").clicked() {
-                self.rows_per_page = (self.rows_per_page + 5).min(5000);
-                rpp_changed = true;
-            }
+                if ui.button("+").clicked() {
+                    self.rows_per_page = (self.rows_per_page + 5).min(5000);
+                    rpp_changed = true;
+                }
 
-            if rpp_changed {
-                self.page = 0;
-                reload_needed = true;
-            }
+                if rpp_changed {
+                    page = 0;
+                    reload_needed = true;
+                }
 
-            ui.separator();
-            ui.label(format!("Rows: {}", total_rows));
+                ui.separator();
+                ui.label(format!("Rows: {}", total_rows));
+            });
 
             if reload_needed {
+                if let Some(fp) = self.current_fp_mut() {
+                    fp.page = page;
+                }
                 self.reload_current_preview_page();
+                // keep legacy field loosely in sync for any old callers
+                self.page = page;
             }
-        });
+        }
     }
 }
