@@ -773,6 +773,8 @@ impl DataTableArea {
                                     })
                                     .inner_margin(Margin::symmetric(8, 4))
                                     .show(ui, |ui| {
+                                        // Return the close button's rect so we can avoid treating its clicks as tab clicks
+                                        let mut close_rect = egui::Rect::NAN;
                                         ui.horizontal(|ui| {
                                             // filename label (smaller font, narrow height)
                                             let text_color = if selected {
@@ -798,20 +800,31 @@ impl DataTableArea {
                                             let show_close = selected || resp.hovered();
                                             let close_resp = Self::close_button(ui, show_close)
                                                 .on_hover_text("Close");
+                                            close_rect = close_resp.rect;
                                             if close_resp.clicked() {
                                                 close_idx = Some(idx);
                                             }
                                         });
+                                        close_rect
                                     });
 
-                                // Make the whole tab clickable
+                                // Make the whole tab clickable, but ignore clicks on the close button area
                                 let tab_hit = ui.interact(
                                     ir.response.rect,
                                     ui.id().with(("tab", idx)),
                                     egui::Sense::click(),
                                 );
                                 if tab_hit.clicked() {
-                                    clicked_idx = Some(idx);
+                                    // If the click occurred over the close button, treat it as a close, not a select.
+                                    let click_pos = tab_hit
+                                        .interact_pointer_pos()
+                                        .or_else(|| ui.input(|i| i.pointer.interact_pos()))
+                                        .unwrap_or_default();
+                                    if ir.inner.contains(click_pos) {
+                                        close_idx = Some(idx);
+                                    } else {
+                                        clicked_idx = Some(idx);
+                                    }
                                 }
 
                                 // Draw top accent underline for the active tab
