@@ -376,15 +376,6 @@ impl DataTableArea {
         response
     }
 
-    // Draw a small circular file-type bullet (accent color)
-    fn filetype_bullet(ui: &mut Ui, color: Color32) {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-        let painter = ui.painter();
-        let c = rect.center();
-        painter.circle_filled(c, 6.0, color);
-        painter.circle_stroke(c, 6.0, Stroke::new(1.0, Color32::from_white_alpha(80)));
-    }
-
     pub fn show_file_tabs(&mut self, ui: &mut Ui) {
         if self.files.is_empty() {
             return;
@@ -417,8 +408,8 @@ impl DataTableArea {
                                     Stroke::new(1.0, Color32::from_rgb(70, 70, 70))
                                 };
 
-                                // VS Code–style tab: flat body + top accent underline, keep your colors
-                                let accent = Color32::from_rgb(0, 120, 215); // keep current accent
+                                // Compact tab: no icon, tighter paddings, same colors
+                                let accent = Color32::from_rgb(0, 120, 215);
                                 let ir = Frame::new()
                                     .fill(tab_fill)
                                     .stroke(tab_stroke)
@@ -428,21 +419,10 @@ impl DataTableArea {
                                         sw: 0,
                                         se: 0,
                                     })
-                                    .inner_margin(Margin::symmetric(10, 8))
+                                    .inner_margin(Margin::symmetric(8, 4))
                                     .show(ui, |ui| {
                                         ui.horizontal(|ui| {
-                                            // left icon (small circular bullet)
-                                            Self::filetype_bullet(
-                                                ui,
-                                                if selected {
-                                                    accent
-                                                } else {
-                                                    Color32::from_rgb(130, 130, 130)
-                                                },
-                                            );
-                                            ui.add_space(6.0);
-
-                                            // filename label
+                                            // filename label (smaller font, narrow height)
                                             let text_color = if selected {
                                                 Color32::WHITE
                                             } else {
@@ -450,19 +430,19 @@ impl DataTableArea {
                                             };
                                             let label = egui::Label::new(
                                                 RichText::new(name.clone())
-                                                    .size(12.0)
+                                                    .size(11.0)
                                                     .color(text_color),
                                             )
                                             .truncate();
                                             let resp = ui
-                                                .add_sized(egui::vec2(140.0, 16.0), label)
+                                                .add_sized(egui::vec2(120.0, 14.0), label)
                                                 .on_hover_text(&*fp.file_path);
                                             if resp.clicked() {
                                                 clicked_idx = Some(idx);
                                             }
 
-                                            // Close button at far right
-                                            ui.add_space(8.0);
+                                            // Close button at far right (keep small spacing)
+                                            ui.add_space(6.0);
                                             let show_close = selected || resp.hovered();
                                             let close_resp = Self::close_button(ui, show_close)
                                                 .on_hover_text("Close");
@@ -491,11 +471,11 @@ impl DataTableArea {
                                             egui::pos2(rect.left() + 6.0, y),
                                             egui::pos2(rect.right() - 6.0, y),
                                         ],
-                                        Stroke::new(2.0, accent),
+                                        Stroke::new(1.5, accent),
                                     );
                                 }
 
-                                ui.add_space(6.0);
+                                ui.add_space(4.0);
                             }
                         });
 
@@ -519,7 +499,7 @@ impl DataTableArea {
                     });
             });
 
-        ui.add_space(6.0);
+        ui.add_space(4.0);
     }
 
     pub fn show_pagination_controls(&mut self, ui: &mut Ui) {
