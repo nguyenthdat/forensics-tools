@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
 use bon::Builder;
-use eframe::egui::{self, Button, Checkbox, DragValue, Frame, RichText, ScrollArea, TextEdit, Ui};
+use eframe::egui::{self, Button, DragValue, Frame, RichText, ScrollArea, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
@@ -81,11 +81,12 @@ impl DataTableArea {
     /// Render the preview table with a header that stays pinned vertically
     /// while sharing the same horizontal scroll as the body.
     pub fn show_preview_table(&mut self, ui: &mut Ui) {
-        let Some(fp) = self.current_fp() else {
-            return;
+        let (headers, rows) = match self.current_fp() {
+            Some(fp) => (fp.headers.clone(), fp.preview_rows.clone()),
+            None => return,
         };
         let col_width: f32 = 180.0;
-        let ncols = fp.headers.len().max(1);
+        let ncols = headers.len().max(1);
 
         // Single horizontal scroll area that wraps both header and body
         ScrollArea::horizontal()
@@ -103,8 +104,7 @@ impl DataTableArea {
                         header_tbl = header_tbl.column(Column::initial(col_width).clip(true));
                     }
                     header_tbl.header(22.0, |mut header| {
-                        // REPLACE the inner for-loop with this:
-                        for (ci, h) in fp.headers.iter().enumerate() {
+                        for (ci, h) in headers.iter().enumerate() {
                             header.col(|ui| {
                                 ui.horizontal(|ui| {
                                     // label (leave room for filter button)
@@ -141,16 +141,22 @@ impl DataTableArea {
                                             });
                                             ui.add_space(4.0);
 
-                                            ui.add(
-                                                TextEdit::singleline(&mut f.search.to_string())
-                                                    .hint_text("Search values..."),
-                                            );
+                                            let mut buf = f.search.to_string();
+                                            if ui
+                                                .add(
+                                                    TextEdit::singleline(&mut buf)
+                                                        .hint_text("Search values..."),
+                                                )
+                                                .changed()
+                                            {
+                                                f.search = ustr(&buf);
+                                            }
                                             ui.add_space(4.0);
 
                                             let mut values: Vec<Ustr> =
                                                 f.distinct_cache.clone().unwrap_or_default();
                                             if !f.search.is_empty() {
-                                                let s = f.search.to_ascii_lowercase();
+                                                let s = f.search.as_str().to_ascii_lowercase();
                                                 values.retain(|v| {
                                                     v.as_str().to_ascii_lowercase().contains(&s)
                                                 });
@@ -231,8 +237,8 @@ impl DataTableArea {
 
                             let row_h = 20.0;
                             body_tbl.body(|body| {
-                                body.rows(row_h, fp.preview_rows.len(), |mut row| {
-                                    let r = &fp.preview_rows[row.index()];
+                                body.rows(row_h, rows.len(), |mut row| {
+                                    let r = &rows[row.index()];
                                     // Ensure consistent column count: pad/truncate to headers length
                                     for ci in 0..ncols {
                                         row.col(|ui| {
