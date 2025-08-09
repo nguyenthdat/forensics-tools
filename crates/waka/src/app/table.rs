@@ -60,6 +60,70 @@ impl DataTableArea {
         }
     }
 
+    /// Render the preview table with a header that stays pinned vertically
+    /// while sharing the same horizontal scroll as the body.
+    pub fn show_preview_table(&mut self, ui: &mut Ui) {
+        let Some(fp) = self.current_fp() else {
+            return;
+        };
+        let col_width: f32 = 180.0; // keep columns aligned; adjust as needed
+
+        // Outer horizontal scroll so header + body move together horizontally
+        ScrollArea::horizontal()
+            .id_salt("dt_preview_hscroll")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // HEADER (pinned vertically): not inside vertical scroll
+                Frame::new()
+                    .fill(Color32::from_rgb(50, 50, 50))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(70, 70, 70)))
+                    .inner_margin(Margin::symmetric(8, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            for h in &fp.headers {
+                                let text = h.as_str();
+                                let lbl = RichText::new(text)
+                                    .strong()
+                                    .size(12.0)
+                                    .color(Color32::WHITE);
+                                ui.add_sized(egui::vec2(col_width, 20.0), egui::Label::new(lbl));
+                            }
+                        });
+                    });
+
+                ui.add_space(4.0);
+
+                // BODY (vertically scrollable only)
+                ScrollArea::vertical()
+                    .id_salt("dt_preview_vscroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for (ri, row) in fp.preview_rows.iter().enumerate() {
+                            // zebra striping for readability
+                            let fill = if ri % 2 == 0 {
+                                Color32::from_rgb(46, 46, 46)
+                            } else {
+                                Color32::from_rgb(40, 40, 40)
+                            };
+                            Frame::new()
+                                .fill(fill)
+                                .inner_margin(Margin::symmetric(8, 4))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        for cell in row {
+                                            let txt = cell.as_str();
+                                            ui.add_sized(
+                                                egui::vec2(col_width, 18.0),
+                                                egui::Label::new(RichText::new(txt).size(12.0)),
+                                            );
+                                        }
+                                    });
+                                });
+                        }
+                    });
+            });
+    }
+
     pub fn reload_current_preview_page(&mut self) {
         // Work with locals to avoid borrowing conflicts while updating self later.
         let rows_per_page = self.rows_per_page;

@@ -431,123 +431,76 @@ impl SqlEditor {
         // Defer potential reload to avoid mutable borrow during immutable borrow of current_fp
         let mut reload_requested = false;
 
-        {
+        // Snapshot needed data first to avoid holding an immutable borrow while mutating
+        let (file_path, preview_len, current_idx, total_files, load_error, no_rows) = {
             let Some(fp) = self.data_table.current_fp() else {
                 return;
             };
+            (
+                fp.file_path.clone(),
+                fp.preview_rows.len(),
+                self.data_table.current_file,
+                self.data_table.files.len(),
+                fp.load_error.clone(),
+                fp.preview_rows.is_empty(),
+            )
+        };
 
-            if let Some(err) = &fp.load_error {
-                Frame::new()
-                    .fill(egui::Color32::from_rgb(45, 45, 45))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 40, 40)))
-                    .corner_radius(CornerRadius::same(4))
-                    .inner_margin(Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
-                    });
-                return;
-            }
+        if let Some(err) = load_error {
+            Frame::new()
+                .fill(egui::Color32::from_rgb(45, 45, 45))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(90, 40, 40)))
+                .corner_radius(CornerRadius::same(4))
+                .inner_margin(Margin::same(8))
+                .show(ui, |ui| {
+                    ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
+                });
+            return;
+        }
 
-            if fp.preview_rows.is_empty() {
-                Frame::new()
-                    .fill(egui::Color32::from_rgb(45, 45, 45))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
-                    .corner_radius(CornerRadius::same(4))
-                    .inner_margin(Margin::same(8))
-                    .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new("File loaded, but no data rows were found.")
-                                .color(egui::Color32::from_rgb(200, 150, 150)),
-                        );
-                    });
-                return;
-            }
-
+        if no_rows {
             Frame::new()
                 .fill(egui::Color32::from_rgb(45, 45, 45))
                 .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
                 .corner_radius(CornerRadius::same(4))
                 .inner_margin(Margin::same(8))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "🔎 Preview of {} (first {} rows)  •  File {}/{}",
-                                fp.file_path,
-                                fp.preview_rows.len(),
-                                self.data_table.current_file + 1,
-                                self.data_table.files.len()
-                            ))
-                            .color(egui::Color32::WHITE)
-                            .size(12.0)
-                            .strong(),
-                        );
-                        if ui.button("⟲ Reload").clicked() {
-                            reload_requested = true;
-                        }
-                    });
-                    ui.add_space(6.0);
-
-                    egui::ScrollArea::both()
-                        .id_salt(format!(
-                            "preview_table_scroll_{}",
-                            self.data_table.current_file
-                        ))
-                        .auto_shrink([false; 2])
-                        .show(ui, |ui| {
-                            let total_min_width = (fp.headers.len().max(1) as f32) * 140.0;
-                            ui.set_min_width(total_min_width);
-
-                            egui::Grid::new(format!(
-                                "preview_header_grid_{}",
-                                self.data_table.current_file
-                            ))
-                            .striped(true)
-                            .spacing(egui::vec2(12.0, 4.0))
-                            .show(ui, |ui| {
-                                for h in &fp.headers {
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(&**h)
-                                                .color(egui::Color32::from_rgb(190, 220, 255))
-                                                .family(egui::FontFamily::Monospace)
-                                                .size(12.0)
-                                                .strong(),
-                                        )
-                                        .selectable(false),
-                                    );
-                                }
-                                ui.end_row();
-
-                                for row in &fp.preview_rows {
-                                    for (idx, cell) in row.iter().enumerate() {
-                                        let truncated = if self.wrap_rows {
-                                            *cell
-                                        } else {
-                                            let mut s: String = cell.chars().take(200).collect();
-                                            if cell.len() > 200 {
-                                                s.push('…');
-                                            }
-                                            Ustr::from(&s)
-                                        };
-                                        let color = if idx == 0 {
-                                            egui::Color32::from_rgb(220, 220, 220)
-                                        } else {
-                                            egui::Color32::from_rgb(200, 200, 200)
-                                        };
-                                        ui.add(egui::Label::new(
-                                            egui::RichText::new(truncated)
-                                                .color(color)
-                                                .family(egui::FontFamily::Monospace)
-                                                .size(11.0),
-                                        ));
-                                    }
-                                    ui.end_row();
-                                }
-                            });
-                        });
+                    ui.label(
+                        egui::RichText::new("File loaded, but no data rows were found.")
+                            .color(egui::Color32::from_rgb(200, 150, 150)),
+                    );
                 });
+            return;
         }
+
+        Frame::new()
+            .fill(egui::Color32::from_rgb(45, 45, 45))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 70, 70)))
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(Margin::same(8))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "🔎 Preview of {} (first {} rows)  •  File {}/{}",
+                            file_path,
+                            preview_len,
+                            current_idx + 1,
+                            total_files
+                        ))
+                        .color(egui::Color32::WHITE)
+                        .size(12.0)
+                        .strong(),
+                    );
+                    if ui.button("⟲ Reload").clicked() {
+                        reload_requested = true;
+                    }
+                });
+                ui.add_space(6.0);
+
+                // Pinned header + shared horizontal scroll
+                self.data_table.show_preview_table(ui);
+            });
 
         if reload_requested
             && let Some(path) = self
