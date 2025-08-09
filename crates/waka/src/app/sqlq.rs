@@ -526,7 +526,7 @@ impl SqlEditor {
                                 for row in &fp.preview_rows {
                                     for (idx, cell) in row.iter().enumerate() {
                                         let truncated = if self.wrap_rows {
-                                            cell.clone()
+                                            *cell
                                         } else {
                                             let mut s: String = cell.chars().take(200).collect();
                                             if cell.len() > 200 {

@@ -82,7 +82,7 @@ impl DataTableArea {
             Ok(mut rdr) => {
                 // headers
                 if let Ok(hdrs) = rdr.headers() {
-                    fp.headers = hdrs.iter().map(|s| ustr(s)).collect();
+                    fp.headers = hdrs.iter().map(ustr).collect();
                 }
 
                 // count rows once per file (if not already counted)
@@ -114,7 +114,7 @@ impl DataTableArea {
                         break;
                     }
                     match rec_res {
-                        Ok(rec) => fp.preview_rows.push(rec.iter().map(|s| ustr(s)).collect()),
+                        Ok(rec) => fp.preview_rows.push(rec.iter().map(ustr).collect()),
                         Err(e) => {
                             fp.load_error = Some(ustr(&format!("Row read error: {e}")));
                             break;
@@ -178,7 +178,7 @@ impl DataTableArea {
         };
 
         // Count first so we can clamp paging appropriately
-        let total = Self::count_rows_for_path(&fp.file_path.to_string());
+        let total = Self::count_rows_for_path(fp.file_path.as_ref());
         fp.total_rows = Some(total);
         self.toal_rows = total as usize;
         self.page = 0;
@@ -187,7 +187,7 @@ impl DataTableArea {
         match cfg.reader() {
             Ok(mut rdr) => {
                 if let Ok(hdrs) = rdr.headers() {
-                    fp.headers = hdrs.iter().map(|s| ustr(s)).collect();
+                    fp.headers = hdrs.iter().map(ustr).collect();
                 } else {
                     fp.load_error = Some(ustr("Cannot read headers"));
                 }
@@ -203,7 +203,7 @@ impl DataTableArea {
                             break;
                         }
                         match rec_res {
-                            Ok(rec) => fp.preview_rows.push(rec.iter().map(|s| ustr(s)).collect()),
+                            Ok(rec) => fp.preview_rows.push(rec.iter().map(ustr).collect()),
                             Err(e) => {
                                 fp.load_error = Some(ustr(&format!("Row read error: {e}")));
                                 break;
@@ -304,9 +304,7 @@ impl DataTableArea {
                                             };
 
                                             let chip = Button::new(
-                                                RichText::new(name.clone())
-                                                    .size(12.0)
-                                                    .color(chip_text),
+                                                RichText::new(name).size(12.0).color(chip_text),
                                             )
                                             .fill(chip_fill)
                                             .stroke(Stroke::new(1.0, Color32::from_rgb(70, 70, 70)))
@@ -371,7 +369,7 @@ impl DataTableArea {
             let total_pages = if rows_per_page == 0 {
                 0
             } else {
-                (total_rows + rows_per_page - 1) / rows_per_page
+                total_rows.div_ceil(rows_per_page)
             };
 
             let mut reload_needed = false;
@@ -413,11 +411,9 @@ impl DataTableArea {
                 // Rows per page controls
                 ui.label("Rows/page:");
                 let mut rpp_changed = false;
-                if ui.button("–").clicked() {
-                    if self.rows_per_page > 5 {
-                        self.rows_per_page = (self.rows_per_page - 5).max(5);
-                        rpp_changed = true;
-                    }
+                if ui.button("–").clicked() && self.rows_per_page > 5 {
+                    self.rows_per_page = (self.rows_per_page - 5).max(5);
+                    rpp_changed = true;
                 }
                 let mut rpp = self.rows_per_page as i64;
                 let r = ui.add(DragValue::new(&mut rpp).range(5..=5000).speed(1));
