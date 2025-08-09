@@ -141,8 +141,6 @@ impl DataTableArea {
                                         .map(|f| !f.selected.is_empty())
                                         .unwrap_or(false);
 
-                                    let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
-
                                     egui::ComboBox::from_id_salt(("col_filter", ci))
                                         .selected_text(RichText::new("Filter").size(12.0).color(
                                             if active {
@@ -157,9 +155,14 @@ impl DataTableArea {
                                             if let Some(fp) = self.current_fp_mut() {
                                                 let f = &mut fp.filters[ci];
 
-                                                // Keep only case-insensitive toggle; default include semantics, no enable/include toggles
+                                                // Keep only case-insensitive toggle; apply immediately on change
                                                 ui.horizontal(|ui| {
-                                                    ui.checkbox(&mut f.case_insensitive, "Aa");
+                                                    if ui
+                                                        .checkbox(&mut f.case_insensitive, "Aa")
+                                                        .changed()
+                                                    {
+                                                        apply_now = true;
+                                                    }
                                                 });
                                                 ui.add_space(4.0);
 
@@ -207,6 +210,8 @@ impl DataTableArea {
                                                                 } else {
                                                                     selected_set.remove(&val);
                                                                 }
+                                                                // Apply immediately on item click
+                                                                apply_now = true;
                                                             }
                                                         }
                                                     });
@@ -219,18 +224,16 @@ impl DataTableArea {
                                                         if let Some(all) = &f.distinct_cache {
                                                             f.selected = all.clone();
                                                         }
-                                                        // Close popup and apply immediately for a snappier UX
+                                                        // Apply immediately but keep popup open
                                                         apply_now = true;
-                                                        Popup::close_id(ui.ctx(), popup_id);
                                                     }
                                                     if ui.button("Clear").clicked() {
                                                         f.selected.clear();
+                                                        // Apply immediately but keep popup open
                                                         clear_now = true;
-                                                        Popup::close_id(ui.ctx(), popup_id);
                                                     }
                                                     if ui.button("Apply").clicked() {
                                                         apply_now = true;
-                                                        Popup::close_id(ui.ctx(), popup_id);
                                                     }
                                                 });
                                             }
