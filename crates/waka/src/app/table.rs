@@ -15,7 +15,13 @@ use eframe::egui::{
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
+use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map as JsonMap, Value as JsonValue};
+use ustr::{Ustr, ustr};
+
+use crate::util;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
@@ -25,11 +31,6 @@ pub enum ExportFormat {
     Parquet,
     Json,
 }
-use regex::{Regex, RegexBuilder};
-use serde::{Deserialize, Serialize};
-use ustr::{Ustr, ustr};
-
-use crate::util;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnFilter {
@@ -962,6 +963,133 @@ impl DataTableArea {
         Ok(kept)
     }
 
+    /// Write rows (filtered or all) of the current file to a JSON writer as an array of objects.
+    fn write_rows_to_json_writer<W: std::io::Write>(
+        &self,
+        fp: &FilePreview,
+        mut out: W,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
+        let headers: Vec<&str> = fp.headers.iter().map(|u| u.as_str()).collect();
+        let path_str = fp.file_path.to_string();
+        let cfg = Config::new(Some(&path_str));
+
+        // helper to emit one object
+        let mut first = true;
+        write!(&mut out, "[")?;
+        let mut emit_obj = |vals: &[String]| -> anyhow::Result<()> {
+            if !first {
+                write!(&mut out, ",")?;
+            }
+            first = false;
+            let mut obj = JsonMap::with_capacity(headers.len());
+            for (i, key) in headers.iter().enumerate() {
+                let v = vals.get(i).map(|s| s.as_str()).unwrap_or("");
+                obj.insert((*key).to_string(), JsonValue::String(v.to_string()));
+            }
+            serde_json::to_writer(&mut out, &JsonValue::Object(obj))?;
+            Ok(())
+        };
+
+        // If we have filtered indices and only_filtered is true, restrict to them; else stream all rows.
+        if only_filtered {
+            if let Some(ref filt) = fp.filtered_indices {
+                if let Ok(Some(mut idx)) = cfg.indexed() {
+                    // iterate contiguous chunks (mirrors paging logic)
+                    let slice = &filt[..];
+                    let mut i = 0usize;
+                    while i < slice.len() {
+                        let base = slice[i];
+                        let mut len = 1usize;
+                        while i + len < slice.len() && slice[i + len] == base + len as u64 {
+                            len += 1;
+                        }
+                        idx.seek(base)
+                            .map_err(|e| anyhow!("Index seek error: {e}"))?;
+                        for rec_res in idx.byte_records().take(len) {
+                            let brec = rec_res?;
+                            let mut vals: Vec<String> =
+                                Vec::with_capacity(headers.len().max(brec.len()));
+                            vals.extend((0..headers.len()).map(|ci| {
+                                brec.get(ci)
+                                    .map(|b| String::from_utf8_lossy(b).into_owned())
+                                    .unwrap_or_default()
+                            }));
+                            emit_obj(&vals)?;
+                        }
+                        i += len;
+                    }
+                    write!(&mut out, "]")?;
+                    out.flush()?;
+                    return Ok(());
+                }
+                // Fallback: stream from reader and pick wanted rows
+                if let Ok(mut rdr) = cfg.reader() {
+                    // Ensure header is consumed
+                    let _ = rdr.headers();
+                    let mut wanted_iter = filt.iter().copied();
+                    let mut next = wanted_iter.next();
+                    for (ri, rec_res) in rdr.records().enumerate() {
+                        match next {
+                            Some(want) if ri as u64 == want => {
+                                let rec = rec_res?;
+                                let mut vals: Vec<String> =
+                                    Vec::with_capacity(headers.len().max(rec.len()));
+                                vals.extend(
+                                    (0..headers.len())
+                                        .map(|ci| rec.get(ci).unwrap_or("").to_string()),
+                                );
+                                emit_obj(&vals)?;
+                                next = wanted_iter.next();
+                                if next.is_none() {
+                                    break;
+                                }
+                            }
+                            Some(want) if (ri as u64) < want => continue,
+                            _ => {
+                                if next.is_none() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    write!(&mut out, "]")?;
+                    out.flush()?;
+                    return Ok(());
+                } else {
+                    return Err(anyhow!("Unable to open CSV reader for filtered export"));
+                }
+            }
+        }
+
+        // No active filters (or exporting all rows): stream everything
+        if let Ok(mut rdr) = cfg.reader() {
+            for rec_res in rdr.records() {
+                let rec = rec_res?;
+                let mut vals: Vec<String> = Vec::with_capacity(headers.len().max(rec.len()));
+                vals.extend((0..headers.len()).map(|ci| rec.get(ci).unwrap_or("").to_string()));
+                emit_obj(&vals)?;
+            }
+            write!(&mut out, "]")?;
+            out.flush()?;
+            Ok(())
+        } else {
+            Err(anyhow!("Unable to open CSV reader"))
+        }
+    }
+
+    fn export_current_to_json_path(
+        &self,
+        dest: &PathBuf,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
+        let Some(fp) = self.current_fp() else {
+            return Err(anyhow!("Cannot export JSON: no file selected"));
+        };
+        let mut file = std::fs::File::create(dest)?;
+        self.write_rows_to_json_writer(fp, &mut file, only_filtered)
+    }
+
     fn export_current_to_csv_path(
         &self,
         dest: &PathBuf,
@@ -1122,8 +1250,18 @@ impl DataTableArea {
                                 }
                             }
                             ExportFormat::Json => {
-                                // TODO: Implement JSON export
-                                todo!("JSON export not implemented yet");
+                                if let Some(path) = FileDialog::new()
+                                    .add_filter("JSON", &["json"])
+                                    .set_file_name(self.default_export_filename("json"))
+                                    .save_file()
+                                {
+                                    self.export_current_to_json_path(
+                                        &path,
+                                        self.export_only_filtered,
+                                    )
+                                } else {
+                                    Ok(())
+                                }
                             }
                         };
 
