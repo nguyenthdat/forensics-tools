@@ -155,30 +155,33 @@ impl DataTableArea {
     /// Render the preview table with a header that stays pinned vertically
     /// while sharing the same horizontal scroll as the body.
     pub fn show_preview_table(&mut self, ui: &mut Ui) {
-        let headers = match self.current_fp() {
-            Some(fp) => fp.headers.clone(),
+        let (headers, file_id) = match self.current_fp() {
+            Some(fp) => (fp.headers.clone(), fp.file_path.clone()),
             None => return,
         };
         let col_width: f32 = 180.0;
         let ncols = headers.len().max(1);
 
-        // Single horizontal scroll area that wraps both header and body
+        // One table with header + scrollable body so column widths stay in sync
         ScrollArea::horizontal()
-            .id_salt("dt_preview_hscroll")
+            .id_salt(("dt_preview_hscroll", file_id.as_str()))
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                // Use a shared id so header & body reuse the same column state (widths, resize)
-                ui.push_id("dt_preview_table", |ui| {
-                    // --- HEADER (pinned vertically) ---
-                    let mut header_tbl = TableBuilder::new(ui)
-                        .id_salt("dt_preview_shared")
-                        .striped(false)
+                ui.push_id(("dt_preview_table", file_id.as_str()), |ui| {
+                    let max_h = ui.available_height();
+                    let mut tbl = TableBuilder::new(ui)
+                        .id_salt(("dt_preview_shared", file_id.as_str()))
+                        .striped(true)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                        .resizable(true);
+                        .resizable(true)
+                        .min_scrolled_height(0.0)   // allow small tables
+                        .max_scroll_height(max_h);  // fill remaining vertical space
                     for _ in 0..ncols {
-                        header_tbl = header_tbl.column(Column::initial(col_width).clip(true));
+                        tbl = tbl.column(Column::initial(col_width).clip(true));
                     }
-                    header_tbl.header(22.0, |mut header| {
+
+                    // Header (pinned)
+                    let table = tbl.header(22.0, |mut header| {
                         for (ci, h) in headers.iter().enumerate() {
                             header.col(|ui| {
                                 ui.horizontal(|ui| {
@@ -191,10 +194,7 @@ impl DataTableArea {
                                             .color(Color32::WHITE),
                                     )
                                     .truncate();
-                                    ui.add_sized(
-                                        egui::vec2((avail - 24.0).max(0.0), 20.0),
-                                        header_label,
-                                    );
+                                    ui.add_sized(egui::vec2((avail - 24.0).max(0.0), 20.0), header_label);
 
                                     // filter dropdown button (menu_button replacement)
                                     let mut apply_now = false;
@@ -206,12 +206,11 @@ impl DataTableArea {
                                         .map(|f| !f.selected.is_empty())
                                         .unwrap_or(false);
 
-                                    let btn_text =
-                                        RichText::new("Filter ▾").size(12.0).color(if active {
-                                            Color32::from_rgb(0, 200, 120)
-                                        } else {
-                                            Color32::from_gray(230)
-                                        });
+                                    let btn_text = RichText::new("Filter ▾").size(12.0).color(if active {
+                                        Color32::from_rgb(0, 200, 120)
+                                    } else {
+                                        Color32::from_gray(230)
+                                    });
                                     let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
                                     let btn_resp = ui.add(Button::new(btn_text));
                                     if btn_resp.clicked() {
@@ -235,12 +234,7 @@ impl DataTableArea {
                                                 if f.use_regex {
                                                     let mut rbuf = f.regex_text.to_string();
                                                     let edited = ui
-                                                        .add(
-                                                            TextEdit::singleline(&mut rbuf)
-                                                                .hint_text(
-                                                                "Regex pattern (e.g. ^foo.*bar$)",
-                                                            ),
-                                                        )
+                                                        .add(TextEdit::singleline(&mut rbuf).hint_text("Regex pattern (e.g. ^foo.*bar$)"))
                                                         .changed();
                                                     if edited {
                                                         f.regex_text = ustr(&rbuf);
@@ -251,12 +245,9 @@ impl DataTableArea {
                                                     }
                                                     if let Some(err) = &f.regex_error {
                                                         ui.label(
-                                                            RichText::new(format!(
-                                                                "⚠ Invalid regex: {}",
-                                                                err
-                                                            ))
-                                                            .color(Color32::from_rgb(220, 90, 90))
-                                                            .size(11.0),
+                                                            RichText::new(format!("⚠ Invalid regex: {}", err))
+                                                                .color(Color32::from_rgb(220, 90, 90))
+                                                                .size(11.0),
                                                         );
                                                     }
                                                     ui.add_space(4.0);
@@ -264,13 +255,9 @@ impl DataTableArea {
 
                                                 let mut buf = f.search.to_string();
                                                 if ui
-                                                    .add(
-                                                        TextEdit::singleline(&mut buf)
-                                                            .hint_text("Search values..."),
-                                                    )
+                                                    .add(TextEdit::singleline(&mut buf).hint_text("Search values..."))
                                                     .changed()
                                                 {
-                                                    // Only update the local filter menu search; do NOT reload the table here
                                                     f.search = ustr(&buf);
                                                 }
                                                 ui.add_space(4.0);
@@ -280,63 +267,38 @@ impl DataTableArea {
                                                     .as_ref()
                                                     .map(|v| v.as_slice())
                                                     .unwrap_or(&[]);
-                                                let search_lower =
-                                                    f.search.as_str().to_ascii_lowercase();
+                                                let search_lower = f.search.as_str().to_ascii_lowercase();
 
-                                                let mut selected_set: std::collections::HashSet<
-                                                    Ustr,
-                                                > = f.selected.iter().cloned().collect();
-                                                egui::ScrollArea::vertical()
-                                                    .max_height(180.0)
-                                                    .show(ui, |ui| {
-                                                        for val in values_slice.iter() {
-                                                            if !search_lower.is_empty()
-                                                                && !val
-                                                                    .as_str()
-                                                                    .to_ascii_lowercase()
-                                                                    .contains(&search_lower)
-                                                            {
-                                                                continue;
-                                                            }
-
-                                                            let mut checked =
-                                                                selected_set.contains(val);
-                                                            if ui
-                                                                .checkbox(
-                                                                    &mut checked,
-                                                                    val.as_str(),
-                                                                )
-                                                                .clicked()
-                                                            {
-                                                                if checked {
-                                                                    selected_set
-                                                                        .insert(val.clone());
-                                                                } else {
-                                                                    selected_set.remove(val);
-                                                                }
-                                                                // Apply immediately on item click
-                                                                apply_now = true;
-                                                            }
+                                                let mut selected_set: std::collections::HashSet<Ustr> =
+                                                    f.selected.iter().cloned().collect();
+                                                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                                    for val in values_slice.iter() {
+                                                        if !search_lower.is_empty()
+                                                            && !val.as_str().to_ascii_lowercase().contains(&search_lower)
+                                                        {
+                                                            continue;
                                                         }
-                                                    });
+
+                                                        let mut checked = selected_set.contains(val);
+                                                        if ui.checkbox(&mut checked, val.as_str()).clicked() {
+                                                            if checked {
+                                                                selected_set.insert(val.clone());
+                                                            } else {
+                                                                selected_set.remove(val);
+                                                            }
+                                                            apply_now = true;
+                                                        }
+                                                    }
+                                                });
                                                 f.selected = selected_set.into_iter().collect();
 
                                                 ui.separator();
                                                 ui.horizontal(|ui| {
-                                                    // Sticky toggles at bottom
-                                                    if ui
-                                                        .checkbox(&mut f.case_insensitive, "Aa")
-                                                        .on_hover_text("Case-insensitive")
-                                                        .changed()
-                                                    {
+                                                    if ui.checkbox(&mut f.case_insensitive, "Aa").on_hover_text("Case-insensitive").changed() {
                                                         f.rebuild_regex();
                                                         apply_now = true;
                                                     }
-                                                    if ui
-                                                        .checkbox(&mut f.use_regex, ".*")
-                                                        .on_hover_text("Use regex")
-                                                        .changed()
-                                                    {
+                                                    if ui.checkbox(&mut f.use_regex, ".*").on_hover_text("Use regex").changed() {
                                                         f.rebuild_regex();
                                                         apply_now = true;
                                                     }
@@ -346,12 +308,10 @@ impl DataTableArea {
                                                         if let Some(all) = &f.distinct_cache {
                                                             f.selected = all.clone();
                                                         }
-                                                        // Apply immediately but keep popup open
                                                         apply_now = true;
                                                     }
                                                     if ui.button("Clear").clicked() {
                                                         f.selected.clear();
-                                                        // Apply immediately but keep popup open
                                                         clear_now = true;
                                                     }
                                                     if ui.button("Apply").clicked() {
@@ -362,8 +322,6 @@ impl DataTableArea {
                                         });
 
                                     if apply_now || clear_now {
-                                        // Apply filter changes immediately and refresh the table now.
-                                        // Popup stays open thanks to persistent popup id + open_memory.
                                         self.apply_filters_for_current_file();
                                         self.reload_current_preview_page();
                                         self.pending_reload = false;
@@ -373,45 +331,24 @@ impl DataTableArea {
                         }
                     });
 
-                    ui.add_space(4.0);
-
-                    // --- BODY (vertically scrollable only) ---
-                    ScrollArea::vertical()
-                        .id_salt("dt_preview_vscroll")
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            let mut body_tbl = TableBuilder::new(ui)
-                                .id_salt("dt_preview_shared")
-                                .striped(true)
-                                .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                                .resizable(true);
-                            for _ in 0..ncols {
-                                body_tbl = body_tbl.column(Column::initial(col_width).clip(true));
-                            }
-
-                            let row_h = 20.0;
-                            body_tbl.body(|body| {
-                                if let Some(fp_ref) = self.current_fp() {
-                                    let rows_ref = &fp_ref.preview_rows;
-                                    body.rows(row_h, rows_ref.len(), |mut row| {
-                                        let r = &rows_ref[row.index()];
-                                        for ci in 0..ncols {
-                                            row.col(|ui| {
-                                                let txt =
-                                                    r.get(ci).map(|s| s.as_str()).unwrap_or("");
-                                                let label =
-                                                    egui::Label::new(RichText::new(txt).size(12.0))
-                                                        .truncate();
-                                                ui.add_sized(
-                                                    egui::vec2(ui.available_width(), row_h - 2.0),
-                                                    label,
-                                                );
-                                            });
-                                        }
+                    // Body (scrolls under the pinned header; widths stay in sync with header)
+                    let row_h = 20.0;
+                    table.body(|body| {
+                        if let Some(fp_ref) = self.current_fp() {
+                            let rows_ref = &fp_ref.preview_rows;
+                            body.rows(row_h, rows_ref.len(), |mut row| {
+                                let r = &rows_ref[row.index()];
+                                for ci in 0..ncols {
+                                    row.col(|ui| {
+                                        let txt = r.get(ci).map(|s| s.as_str()).unwrap_or("");
+                                        let label = egui::Label::new(RichText::new(txt).size(12.0)).truncate();
+                                        ui.add_sized(egui::vec2(ui.available_width(), row_h - 2.0), label);
                                     });
                                 }
                             });
-                        });
+                        }
+                    });
+
                     // If something else scheduled a reload, run it even while the popup is open.
                     if self.pending_reload {
                         self.reload_current_preview_page();

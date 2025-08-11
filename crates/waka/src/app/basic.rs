@@ -193,6 +193,9 @@ impl BasicEditor {
             .corner_radius(CornerRadius::same(4))
             .inner_margin(Margin::same(8))
             .show(ui, |ui| {
+                // Ensure the results frame expands to available height so the table can fill it
+                let avail_h = ui.available_height();
+                ui.set_min_height(avail_h);
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!(
