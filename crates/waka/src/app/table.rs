@@ -23,6 +23,7 @@ pub enum ExportFormat {
     Xlsx,
     Ods,
     Parquet,
+    Json,
 }
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
@@ -1177,6 +1178,10 @@ impl DataTableArea {
                                 } else {
                                     Ok(())
                                 }
+                            }
+                            ExportFormat::Json => {
+                                // TODO: Implement JSON export
+                                todo!("JSON export not implemented yet");
                             }
                         };
 
