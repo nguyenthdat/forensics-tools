@@ -230,9 +230,12 @@ impl DataTableArea {
                                                 if f.use_regex {
                                                     let mut rbuf = f.regex_text.to_string();
                                                     let edited = ui
-                                                        .add(TextEdit::singleline(&mut rbuf).hint_text(
-                                                            "Regex pattern (e.g. ^foo.*bar$)",
-                                                        ))
+                                                        .add(
+                                                            TextEdit::singleline(&mut rbuf)
+                                                                .hint_text(
+                                                                "Regex pattern (e.g. ^foo.*bar$)",
+                                                            ),
+                                                        )
                                                         .changed();
                                                     if edited {
                                                         f.regex_text = ustr(&rbuf);
@@ -267,15 +270,13 @@ impl DataTableArea {
                                                 }
                                                 ui.add_space(4.0);
 
-                                                let values_slice: &[Ustr] =
-                                                    f.distinct_cache
-                                                        .as_ref()
-                                                        .map(|v| v.as_slice())
-                                                        .unwrap_or(&[]);
-                                                let search_lower = f
-                                                    .search
-                                                    .as_str()
-                                                    .to_ascii_lowercase();
+                                                let values_slice: &[Ustr] = f
+                                                    .distinct_cache
+                                                    .as_ref()
+                                                    .map(|v| v.as_slice())
+                                                    .unwrap_or(&[]);
+                                                let search_lower =
+                                                    f.search.as_str().to_ascii_lowercase();
 
                                                 let mut selected_set: std::collections::HashSet<
                                                     Ustr,
@@ -293,13 +294,18 @@ impl DataTableArea {
                                                                 continue;
                                                             }
 
-                                                            let mut checked = selected_set.contains(val);
+                                                            let mut checked =
+                                                                selected_set.contains(val);
                                                             if ui
-                                                                .checkbox(&mut checked, val.as_str())
+                                                                .checkbox(
+                                                                    &mut checked,
+                                                                    val.as_str(),
+                                                                )
                                                                 .clicked()
                                                             {
                                                                 if checked {
-                                                                    selected_set.insert(val.clone());
+                                                                    selected_set
+                                                                        .insert(val.clone());
                                                                 } else {
                                                                     selected_set.remove(val);
                                                                 }
@@ -385,9 +391,15 @@ impl DataTableArea {
                                         let r = &rows_ref[row.index()];
                                         for ci in 0..ncols {
                                             row.col(|ui| {
-                                                let txt = r.get(ci).map(|s| s.as_str()).unwrap_or("");
-                                                let label = egui::Label::new(RichText::new(txt).size(12.0)).truncate();
-                                                ui.add_sized(egui::vec2(col_width, row_h - 2.0), label);
+                                                let txt =
+                                                    r.get(ci).map(|s| s.as_str()).unwrap_or("");
+                                                let label =
+                                                    egui::Label::new(RichText::new(txt).size(12.0))
+                                                        .truncate();
+                                                ui.add_sized(
+                                                    egui::vec2(col_width, row_h - 2.0),
+                                                    label,
+                                                );
                                             });
                                         }
                                     });
