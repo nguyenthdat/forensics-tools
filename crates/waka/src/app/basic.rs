@@ -1,28 +1,20 @@
 use std::path::PathBuf;
 
+use bon::Builder;
 use eframe::egui::{self, ComboBox, Frame, Ui};
 use epaint::{Color32, CornerRadius, Margin, Stroke, StrokeKind};
-use ustr::Ustr;
 
 use crate::app::table::DataTableArea;
 
+#[derive(Debug, Clone, Builder)]
 pub struct BasicEditor {
     data_table: DataTableArea,
-
-    show_borders: bool,
-    wrap_rows: bool,
-    search_column: Ustr,
-    search_query: Ustr,
 }
 
 impl BasicEditor {
     pub fn new() -> Self {
         Self {
             data_table: DataTableArea::default(),
-            show_borders: true,
-            wrap_rows: false,
-            search_column: Ustr::from(""),
-            search_query: Ustr::from(""),
         }
     }
 
@@ -51,9 +43,6 @@ impl BasicEditor {
                     // Table controls
                     self.show_table_controls(ui);
 
-                    // Search controls
-                    self.show_search_controls(ui);
-
                     // Results content placeholder
                     self.show_results_placeholder(ui);
                 });
@@ -62,16 +51,17 @@ impl BasicEditor {
 
     pub fn show_table_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            // Export button (placeholder)
-            let export_button = egui::Button::new(
-                egui::RichText::new("📤 Export data")
-                    .color(egui::Color32::WHITE)
-                    .size(12.0),
-            )
-            .fill(egui::Color32::from_rgb(0, 120, 215))
-            .corner_radius(CornerRadius::same(4));
-            if ui.add(export_button).clicked() {
-                // TODO: implement export
+            if self.data_table.current_fp().is_some() {
+                let export_button = egui::Button::new(
+                    egui::RichText::new("📤 Export data")
+                        .color(egui::Color32::WHITE)
+                        .size(12.0),
+                )
+                .fill(egui::Color32::from_rgb(0, 120, 215))
+                .corner_radius(CornerRadius::same(4));
+                let resp = ui.add(export_button);
+                // Open the DataTableArea export popup anchored to this button
+                self.data_table.show_export_popup(ui, &resp);
             }
 
             // File selector if multiple files
@@ -98,67 +88,9 @@ impl BasicEditor {
                         }
                     });
             }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::ComboBox::from_label("Show/Hide Columns")
-                    .selected_text("Show/Hide Columns")
-                    .show_ui(ui, |ui| {
-                        if let Some(fp) = self.data_table.current_fp() {
-                            for h in &fp.headers {
-                                ui.label(h.as_str());
-                            }
-                        } else {
-                            ui.label("No file loaded");
-                        }
-                    });
-
-                ui.add_space(16.0);
-                ui.checkbox(&mut self.show_borders, "Borders");
-                ui.add_space(8.0);
-                ui.checkbox(&mut self.wrap_rows, "Wrap Rows");
-            });
         });
 
         ui.add_space(8.0);
-    }
-
-    pub fn show_search_controls(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Search column:")
-                    .color(egui::Color32::WHITE)
-                    .size(12.0),
-            );
-
-            let headers: Vec<Ustr> = self
-                .data_table
-                .current_fp()
-                .map(|fp| fp.headers.clone())
-                .unwrap_or_default();
-
-            ComboBox::from_id_salt("search_column")
-                .selected_text(&*self.search_column)
-                .show_ui(ui, |ui| {
-                    if headers.is_empty() {
-                        ui.label("No headers");
-                    } else {
-                        for h in headers {
-                            ui.selectable_value(&mut self.search_column, h, &*h);
-                        }
-                    }
-                });
-
-            ui.add_space(8.0);
-
-            let hint = format!("Search query for {}...", self.search_column);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.search_query.to_string())
-                    .hint_text(hint)
-                    .desired_width(200.0),
-            );
-        });
-
-        ui.add_space(12.0);
     }
 
     pub fn show_results_placeholder(&mut self, ui: &mut Ui) {
@@ -184,11 +116,11 @@ impl BasicEditor {
 
             // Show explicit prompt while a file is being dragged in
             let text = if files_being_dropped_now {
-                "Release to load CSV with first 50 rows preview"
+                "Release to load CSV file(s)"
             } else if dragging_files_in {
-                "Drop CSV file(s) to preview first 50 rows"
+                "Drop CSV file(s) to preview"
             } else {
-                "📁 Drag & drop CSV file(s) here to preview first 50 rows (slice 0..50)"
+                "📁 Drag & drop CSV file(s) here"
             };
             ui.put(
                 rect.shrink2(egui::Vec2::new(8.0, 8.0)),

@@ -2,7 +2,12 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
+use anyhow::anyhow;
 use bon::Builder;
+use csv::Writer;
+use csvs_convert::{
+    Options, csvs_to_ods_with_options, csvs_to_parquet_with_options, csvs_to_xlsx_with_options,
+};
 use eframe::egui::{
     self, Align, Button, DragValue, Frame, Layout, Popup, PopupCloseBehavior, RectAlign, RichText,
     ScrollArea, TextEdit, Ui,
@@ -10,6 +15,15 @@ use eframe::egui::{
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
+use rfd::FileDialog;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Csv,
+    Xlsx,
+    Ods,
+    Parquet,
+}
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use ustr::{Ustr, ustr};
@@ -75,7 +89,7 @@ impl ColumnFilter {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Builder)]
+#[derive(Debug, Clone, Builder)]
 pub struct FilePreview {
     pub file_path: Ustr,
     pub headers: Vec<Ustr>,
@@ -84,18 +98,19 @@ pub struct FilePreview {
     pub page: usize, // 0-based, per-file current page
     pub total_rows: Option<u64>,
     pub load_error: Option<Ustr>,
-    #[serde(skip)]
     pub filtered_indices: Option<Vec<u64>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Builder)]
+#[derive(Debug, Clone, Builder)]
 pub struct DataTableArea {
     pub files: Vec<FilePreview>,
     pub current_file: usize,
     pub toal_rows: usize, // kept for backward-compat
     pub rows_per_page: usize,
     pub page: usize, // 0-based
-    #[serde(skip)]
+    pub export_format: ExportFormat,
+    pub export_only_filtered: bool,
+    pub export_status: Option<Ustr>,
     pub pending_reload: bool,
 }
 
@@ -107,6 +122,9 @@ impl Default for DataTableArea {
             toal_rows: 0,
             rows_per_page: 50,
             page: 0,
+            export_format: ExportFormat::Csv,
+            export_only_filtered: true,
+            export_status: None,
             pending_reload: false,
         }
     }
@@ -869,6 +887,299 @@ impl DataTableArea {
         }
     }
 
+    /// Write rows (filtered or all) of the current file to a CSV writer.
+    fn write_rows_to_csv_writer<W: std::io::Write>(
+        &self,
+        fp: &FilePreview,
+        mut wtr: Writer<W>,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
+        // Write headers that we cache in-memory
+        wtr.write_record(fp.headers.iter().map(|u| u.as_str()))?;
+
+        let path_str = fp.file_path.to_string();
+        let cfg = Config::new(Some(&path_str));
+
+        // If we have filtered indices and only_filtered is true, restrict to them; else stream all rows.
+        if only_filtered {
+            if let Some(ref filt) = fp.filtered_indices {
+                // Fast-path using the qsv index when available
+                if let Ok(Some(mut idx)) = cfg.indexed() {
+                    // Iterate contiguous chunks to minimize seeking, mirroring reload logic
+                    let slice = &filt[..];
+                    let mut i = 0usize;
+                    while i < slice.len() {
+                        let base = slice[i];
+                        let mut len = 1usize;
+                        while i + len < slice.len() && slice[i + len] == base + len as u64 {
+                            len += 1;
+                        }
+                        idx.seek(base)
+                            .map_err(|e| anyhow!("Index seek error: {e}"))?;
+                        for rec_res in idx.byte_records().take(len) {
+                            let brec = rec_res?;
+                            wtr.write_byte_record(&brec)?;
+                        }
+                        i += len;
+                    }
+                    wtr.flush().map_err(|e| anyhow!("Flush failed: {e}"))?;
+                    return Ok(());
+                }
+
+                // Fallback: stream from reader and pick wanted rows
+                if let Ok(mut rdr) = cfg.reader() {
+                    // Ensure header row is consumed before records()
+                    let _ = rdr.headers();
+                    let mut wanted_iter = filt.iter().copied();
+                    let mut next = wanted_iter.next();
+                    for (ri, rec_res) in rdr.records().enumerate() {
+                        match next {
+                            Some(want) if ri as u64 == want => {
+                                let rec = rec_res.map_err(|e| anyhow!("Row read error: {e}"))?;
+                                wtr.write_record(rec.iter())
+                                    .map_err(|e| anyhow!("Write row failed: {e}"))?;
+                                next = wanted_iter.next();
+                                if next.is_none() {
+                                    break;
+                                }
+                            }
+                            Some(want) if (ri as u64) < want => continue,
+                            _ => {
+                                if next.is_none() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    wtr.flush().map_err(|e| anyhow!("Flush failed: {e}"))?;
+                    return Ok(());
+                } else {
+                    return Err(anyhow!("Unable to open CSV reader for filtered export"));
+                }
+            }
+            // If only_filtered is requested but no filters are active, fall through to export all rows.
+        }
+
+        // No active filters (or exporting all rows): stream everything
+        if let Ok(mut rdr) = cfg.reader() {
+            // Write remaining rows as-is
+            for rec_res in rdr.records() {
+                let rec = rec_res.map_err(|e| anyhow!("Row read error: {e}"))?;
+                wtr.write_record(rec.iter())?;
+            }
+            wtr.flush().map_err(|e| anyhow!("Flush failed: {e}"))?;
+            Ok(())
+        } else {
+            Err(anyhow!("Unable to open CSV reader"))
+        }
+    }
+
+    /// Create a temporary CSV (UTF-8, comma-delimited) with the current (optionally filtered) rows.
+    fn make_temp_csv_for_current(&self, only_filtered: bool) -> anyhow::Result<PathBuf> {
+        let Some(fp) = self.current_fp() else {
+            return Err(anyhow!("Cannot create temp CSV: no file selected"));
+        };
+        // Build a temp filename that carries a human-readable stem and .csv suffix,
+        // so downstream converters have a resource name/title.
+        let base = crate::util::display_name(&fp.file_path);
+        let mut stem: String = base
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        if stem.is_empty() {
+            stem = "export".into();
+        }
+        if stem.len() > 31 {
+            stem.truncate(31); // friendly sheet/resource name
+        }
+
+        let mut tmp = tempfile::Builder::new()
+            .prefix(&stem)
+            .suffix(".csv")
+            .tempfile()?;
+        {
+            let wtr = Writer::from_writer(&mut tmp);
+            self.write_rows_to_csv_writer(fp, wtr, only_filtered)?;
+        }
+        let path = tmp.into_temp_path();
+        // Persist the file so it survives once the NamedTempFile is dropped.
+        let kept = path.keep()?;
+        Ok(kept)
+    }
+
+    fn export_current_to_csv_path(
+        &self,
+        dest: &PathBuf,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
+        let Some(fp) = self.current_fp() else {
+            return Err(anyhow!("Cannot export CSV: no file selected"));
+        };
+        let file = std::fs::File::create(dest)?;
+        let wtr = Writer::from_writer(file);
+        self.write_rows_to_csv_writer(fp, wtr, only_filtered)
+    }
+
+    fn export_current_to_xlsx_path(
+        &self,
+        dest: &PathBuf,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
+        let temp_csv = self.make_temp_csv_for_current(only_filtered)?;
+        let options = Options::builder()
+            .delimiter(Some(b',')) // we wrote comma-delimited temp CSV
+            .threads(1)
+            .build();
+        let _ =
+            csvs_to_xlsx_with_options(dest.to_string_lossy().to_string(), vec![temp_csv], options)?;
+
+        Ok(())
+    }
+
+    fn export_current_to_ods_path(
+        &self,
+        dest: &PathBuf,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
+        let temp_csv = self.make_temp_csv_for_current(only_filtered)?;
+        let options = Options::builder()
+            .delimiter(Some(b',')) // we wrote comma-delimited temp CSV
+            .threads(1)
+            .build();
+        let _ =
+            csvs_to_ods_with_options(dest.to_string_lossy().to_string(), vec![temp_csv], options)?;
+
+        Ok(())
+    }
+
+    fn export_current_to_parquet_dir(
+        &self,
+        dest_dir: &PathBuf,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
+        let temp_csv = self.make_temp_csv_for_current(only_filtered)?;
+        let options = Options::builder()
+            .delimiter(Some(b',')) // we wrote comma-delimited temp CSV
+            .threads(1)
+            .build();
+        let _ = csvs_to_parquet_with_options(
+            dest_dir.to_string_lossy().to_string(),
+            vec![temp_csv],
+            options,
+        )?;
+        Ok(())
+    }
+
+    fn default_export_filename(&self, ext: &str) -> String {
+        if let Some(fp) = self.current_fp() {
+            let base = crate::util::display_name(&fp.file_path);
+            format!("{}_filtered.{}", base, ext)
+        } else {
+            format!("export_filtered.{}", ext)
+        }
+    }
+
+    /// Render the export popup anchored to `anchor`. Call this from the existing
+    /// blue "Export data" button instead of creating another button here.
+    pub fn show_export_popup(&mut self, ui: &mut Ui, anchor: &egui::Response) {
+        let popup_id = ui.make_persistent_id("export_popup");
+        if anchor.clicked() {
+            egui::Popup::toggle_id(ui.ctx(), popup_id);
+        }
+        egui::Popup::from_response(anchor)
+            .open_memory(None)
+            .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+            .id(popup_id)
+            .show(|ui| {
+                ui.set_min_width(260.0);
+                ui.label(RichText::new("Export current file").strong());
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label("Format:");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Csv, "CSV");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Xlsx, "XLSX");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Ods, "ODS");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Parquet, "Parquet");
+                });
+                ui.add_space(4.0);
+                ui.checkbox(&mut self.export_only_filtered, "Only export filtered rows");
+                ui.add_space(6.0);
+
+                if let Some(msg) = &self.export_status {
+                    ui.label(RichText::new(msg.as_str()).color(Color32::from_rgb(160, 200, 160)));
+                    ui.add_space(6.0);
+                }
+
+                ui.horizontal(|ui| {
+                    if ui.button("Save As…").clicked() {
+                        // Dispatch per selected format
+                        let result: anyhow::Result<()> = match self.export_format {
+                            ExportFormat::Csv => {
+                                if let Some(path) = FileDialog::new()
+                                    .add_filter("CSV", &["csv"])
+                                    .set_file_name(self.default_export_filename("csv"))
+                                    .save_file()
+                                {
+                                    self.export_current_to_csv_path(
+                                        &path,
+                                        self.export_only_filtered,
+                                    )
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                            ExportFormat::Xlsx => {
+                                if let Some(path) = FileDialog::new()
+                                    .add_filter("Excel Workbook", &["xlsx"])
+                                    .set_file_name(self.default_export_filename("xlsx"))
+                                    .save_file()
+                                {
+                                    self.export_current_to_xlsx_path(
+                                        &path,
+                                        self.export_only_filtered,
+                                    )
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                            ExportFormat::Ods => {
+                                if let Some(path) = FileDialog::new()
+                                    .add_filter("OpenDocument Spreadsheet", &["ods"])
+                                    .set_file_name(self.default_export_filename("ods"))
+                                    .save_file()
+                                {
+                                    self.export_current_to_ods_path(
+                                        &path,
+                                        self.export_only_filtered,
+                                    )
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                            ExportFormat::Parquet => {
+                                if let Some(dir) = FileDialog::new().pick_folder() {
+                                    self.export_current_to_parquet_dir(
+                                        &dir,
+                                        self.export_only_filtered,
+                                    )
+                                } else {
+                                    Ok(())
+                                }
+                            }
+                        };
+
+                        self.export_status = Some(ustr(&match result {
+                            Ok(()) => "✅ Export complete".to_string(),
+                            Err(e) => format!("⚠ Export failed: {e}"),
+                        }));
+                    }
+                    if ui.button("Close").clicked() {
+                        egui::Popup::close_id(ui.ctx(), popup_id);
+                    }
+                });
+            });
+    }
+
     pub fn show_pagination_controls(&mut self, ui: &mut Ui) {
         {
             // Pull current values without holding a mutable borrow during UI
@@ -948,6 +1259,8 @@ impl DataTableArea {
 
                 ui.separator();
                 ui.label(format!("Rows: {}", total_rows));
+                ui.separator();
+                // Removed: self.show_export_controls(ui);
             });
 
             if reload_needed {
