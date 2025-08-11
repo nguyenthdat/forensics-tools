@@ -171,6 +171,7 @@ impl DataTableArea {
                 ui.push_id("dt_preview_table", |ui| {
                     // --- HEADER (pinned vertically) ---
                     let mut header_tbl = TableBuilder::new(ui)
+                        .id_salt("dt_preview_shared")
                         .striped(false)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                         .resizable(true);
@@ -182,14 +183,17 @@ impl DataTableArea {
                             header.col(|ui| {
                                 ui.horizontal(|ui| {
                                     // label (leave room for filter button)
+                                    let avail = ui.available_width().max(0.0);
+                                    let header_label = egui::Label::new(
+                                        RichText::new(h.as_str())
+                                            .strong()
+                                            .size(12.0)
+                                            .color(Color32::WHITE),
+                                    )
+                                    .truncate();
                                     ui.add_sized(
-                                        egui::vec2(col_width - 24.0, 20.0),
-                                        egui::Label::new(
-                                            RichText::new(h.as_str())
-                                                .strong()
-                                                .size(12.0)
-                                                .color(Color32::WHITE),
-                                        ),
+                                        egui::vec2((avail - 24.0).max(0.0), 20.0),
+                                        header_label,
                                     );
 
                                     // filter dropdown button (menu_button replacement)
@@ -377,6 +381,7 @@ impl DataTableArea {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             let mut body_tbl = TableBuilder::new(ui)
+                                .id_salt("dt_preview_shared")
                                 .striped(true)
                                 .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                                 .resizable(true);
@@ -398,7 +403,7 @@ impl DataTableArea {
                                                     egui::Label::new(RichText::new(txt).size(12.0))
                                                         .truncate();
                                                 ui.add_sized(
-                                                    egui::vec2(col_width, row_h - 2.0),
+                                                    egui::vec2(ui.available_width(), row_h - 2.0),
                                                     label,
                                                 );
                                             });
