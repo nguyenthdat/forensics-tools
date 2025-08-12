@@ -7,8 +7,11 @@ use qsv::{
     config::{Config, Delimiter},
     util,
 };
-use std::io::{self, BufRead, Write};
 use std::path::Path;
+use std::{
+    collections::HashSet,
+    io::{self, BufRead, Write},
+};
 use ustr::Ustr;
 
 const RW_BUFFER_CAPACITY: usize = 1_000_000; // 1 MB
@@ -335,8 +338,8 @@ pub fn external_sort_row_indices_by_columns(
 
 // Draw a small up/down triangle as a clickable icon button (font-independent).
 pub fn sort_triangle_button(ui: &mut Ui, up: bool, active: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
-    let r = rect.shrink2(egui::vec2(4.0, 4.0));
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
+    let r = rect.shrink2(egui::vec2(2.5, 2.5));
     let (p1, p2, p3) = if up {
         (
             egui::pos2(r.center().x, r.top()),
@@ -357,8 +360,115 @@ pub fn sort_triangle_button(ui: &mut Ui, up: bool, active: bool) -> egui::Respon
     } else {
         Color32::from_gray(170)
     };
-    let stroke = Stroke::new(1.0, Color32::from_gray(60));
+    let stroke = Stroke::new(0.9, Color32::from_gray(60));
     ui.painter()
         .add(Shape::convex_polygon(vec![p1, p2, p3], fill, stroke));
     response
+}
+
+// Draw a compact funnel (filter) icon as a clickable button.
+pub fn filter_icon_button(ui: &mut Ui, active: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(16.0, 14.0), egui::Sense::click());
+    let r = rect.shrink2(egui::vec2(2.0, 1.5));
+
+    let fill = if active {
+        Color32::from_rgb(0, 200, 120)
+    } else if response.hovered() {
+        Color32::from_gray(210)
+    } else {
+        Color32::from_gray(170)
+    };
+    let stroke = Stroke::new(1.0, Color32::from_gray(60));
+
+    // Top trapezoid
+    let top_h = (r.height() * 0.55).clamp(6.0, 9.0);
+    let stem_w = (r.width() * 0.18).clamp(2.0, 3.0);
+    let mid_y = r.top() + top_h;
+    let cx = r.center().x;
+    let trapezoid = vec![
+        egui::pos2(r.left(), r.top()),
+        egui::pos2(r.right(), r.top()),
+        egui::pos2(cx + stem_w, mid_y),
+        egui::pos2(cx - stem_w, mid_y),
+    ];
+    ui.painter()
+        .add(Shape::convex_polygon(trapezoid, fill, stroke));
+
+    // Stem rectangle
+    let stem_h = (r.height() - top_h - 1.0).max(3.0);
+    let stem = vec![
+        egui::pos2(cx - stem_w, mid_y),
+        egui::pos2(cx + stem_w, mid_y),
+        egui::pos2(cx + stem_w, mid_y + stem_h),
+        egui::pos2(cx - stem_w, mid_y + stem_h),
+    ];
+    ui.painter().add(Shape::convex_polygon(stem, fill, stroke));
+
+    response
+}
+
+pub fn count_rows_for_path(path: &str) -> u64 {
+    let cfg = Config::new(Some(&path.to_string()));
+    // Try index first
+    if let Ok(Some(idx)) = cfg.indexed() {
+        return idx.count();
+    }
+    // Fallback: scan the file (faster: use byte_records to avoid string allocations)
+    if let Ok(mut rdr) = cfg.reader() {
+        let mut cnt: u64 = 0;
+        for rec in rdr.byte_records() {
+            if rec.is_ok() {
+                cnt = cnt.saturating_add(1);
+            }
+        }
+        cnt
+    } else {
+        0
+    }
+}
+
+pub fn close_button(ui: &mut Ui, emphasize: bool) -> egui::Response {
+    let desired = egui::vec2(18.0, 18.0);
+    let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
+
+    let color = if emphasize {
+        Color32::from_white_alpha(230)
+    } else {
+        Color32::from_white_alpha(110)
+    };
+    let stroke = Stroke::new(1.6, color);
+
+    // Draw a crisp X
+    let r = rect.shrink(4.0);
+    let painter = ui.painter();
+    painter.line_segment([r.left_top(), r.right_bottom()], stroke);
+    painter.line_segment([r.right_top(), r.left_bottom()], stroke);
+
+    response
+}
+
+#[inline]
+pub fn lower_ascii_into<'a>(buf: &'a mut Vec<u8>, src: &[u8]) -> &'a [u8] {
+    buf.clear();
+    buf.reserve(src.len());
+    for &b in src {
+        buf.push(b.to_ascii_lowercase());
+    }
+    &buf[..]
+}
+
+// --- Performance helpers for filtering on large files ---
+#[inline]
+pub fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> HashSet<Vec<u8>> {
+    let mut set = HashSet::with_capacity(selected.len());
+    for v in selected {
+        let mut bytes = v.as_str().as_bytes().to_vec();
+        if case_insensitive {
+            for b in &mut bytes {
+                *b = b.to_ascii_lowercase();
+            }
+        }
+        set.insert(bytes);
+    }
+    set
 }

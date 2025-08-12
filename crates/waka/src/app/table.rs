@@ -12,7 +12,7 @@ use eframe::egui::{
     ScrollArea, TextEdit, Ui,
 };
 use egui_extras::{Column, TableBuilder};
-use epaint::{Color32, CornerRadius, Margin, Shape, Stroke};
+use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
 use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
@@ -137,26 +137,6 @@ impl Default for DataTableArea {
 }
 
 impl DataTableArea {
-    fn count_rows_for_path(path: &str) -> u64 {
-        let cfg = Config::new(Some(&path.to_string()));
-        // Try index first
-        if let Ok(Some(idx)) = cfg.indexed() {
-            return idx.count();
-        }
-        // Fallback: scan the file (faster: use byte_records to avoid string allocations)
-        if let Ok(mut rdr) = cfg.reader() {
-            let mut cnt: u64 = 0;
-            for rec in rdr.byte_records() {
-                if rec.is_ok() {
-                    cnt = cnt.saturating_add(1);
-                }
-            }
-            cnt
-        } else {
-            0
-        }
-    }
-
     /// Render the preview table with a header that stays pinned vertically
     /// while sharing the same horizontal scroll as the body.
     pub fn show_preview_table(&mut self, ui: &mut Ui) {
@@ -191,7 +171,7 @@ impl DataTableArea {
                             header.col(|ui| {
                                 // Allocate a single row area and split into: [label        |   controls]
                                 let avail = ui.available_width().max(0.0);
-                                let controls_w = 100.0; // reserve space so Filter + ▲▼ are not clipped
+                                let controls_w = 56.0; // reserve space so Filter + ▲▼ are not clipped
                                 let label_w = (avail - controls_w).max(0.0);
                                 ui.allocate_ui_with_layout(
                                     egui::vec2(avail, 20.0),
@@ -208,157 +188,165 @@ impl DataTableArea {
                                         ui.add_sized(egui::vec2(label_w, 20.0), header_label);
 
                                         // --- Right: controls (Filter ▾ button + ▲ ▼ sort buttons)
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            // Filter button (keep text; constrain min width so it stays visible)
-                                            let active = self
-                                                .current_fp()
-                                                .and_then(|fp| fp.filters.get(ci))
-                                                .map(|f| !f.selected.is_empty())
-                                                .unwrap_or(false);
-                                            let btn_resp = Self::filter_icon_button(ui, active).on_hover_text("Filter");
-                                            let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
-                                            if btn_resp.clicked() {
-                                                Popup::toggle_id(ui.ctx(), popup_id);
-                                            }
+                                        ui.scope(|ui| {
+                                            // tighter spacing just for these header controls
+                                            let spacing = &mut ui.style_mut().spacing;
+                                            spacing.item_spacing.x = 2.0;
+                                            spacing.item_spacing.y = 0.0;
+                                            spacing.button_padding = egui::vec2(2.0, 1.0);
 
-                                            // Sort buttons (vector triangles so we don't depend on font glyphs)
-                                            let is_active_sort = self.sort_col == Some(ci);
-                                            let desc_resp = Self::sort_triangle_button(ui, false, is_active_sort && self.sort_desc)
-                                                .on_hover_text("Sort descending");
-                                            if desc_resp.clicked() {
-                                                self.on_sort_click(ci, true);
-                                            }
-                                            let asc_resp = Self::sort_triangle_button(ui, true, is_active_sort && !self.sort_desc)
-                                                .on_hover_text("Sort ascending");
-                                            if asc_resp.clicked() {
-                                                self.on_sort_click(ci, false);
-                                            }
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                // Filter button (keep text; constrain min width so it stays visible)
+                                                let active = self
+                                                    .current_fp()
+                                                    .and_then(|fp| fp.filters.get(ci))
+                                                    .map(|f| !f.selected.is_empty())
+                                                    .unwrap_or(false);
+                                                let btn_resp = util::filter_icon_button(ui, active).on_hover_text("Filter");
+                                                let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
+                                                if btn_resp.clicked() {
+                                                    Popup::toggle_id(ui.ctx(), popup_id);
+                                                }
 
-                                            // Keep a bit of breathing room from the label
-                                            ui.add_space(2.0);
+                                                // Sort buttons (vector triangles so we don't depend on font glyphs)
+                                                let is_active_sort = self.sort_col == Some(ci);
+                                                let desc_resp = util::sort_triangle_button(ui, false, is_active_sort && self.sort_desc)
+                                                    .on_hover_text("Sort descending");
+                                                if desc_resp.clicked() {
+                                                    self.on_sort_click(ci, true);
+                                                }
+                                                let asc_resp = util::sort_triangle_button(ui, true, is_active_sort && !self.sort_desc)
+                                                    .on_hover_text("Sort ascending");
+                                                if asc_resp.clicked() {
+                                                    self.on_sort_click(ci, false);
+                                                }
 
-                                            // Filter popup anchored to `btn_resp`
-                                            let mut apply_now = false;
-                                            let mut clear_now = false;
-                                            Popup::from_response(&btn_resp)
-                                                .layout(Layout::top_down_justified(Align::LEFT))
-                                                .open_memory(None)
-                                                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                                                .id(popup_id)
-                                                .align(RectAlign::BOTTOM_START)
-                                                .width(btn_resp.rect.width())
-                                                .show(|ui: &mut Ui| {
-                                                    ui.set_min_width(ui.available_width());
-                                                    self.ensure_distinct_for_col(ci);
-                                                    if let Some(fp) = self.current_fp_mut() {
-                                                        let f = &mut fp.filters[ci];
+                                                // Keep a bit of breathing room from the label
+                                                ui.add_space(1.0);
 
-                                                        if f.use_regex {
-                                                            let mut rbuf = f.regex_text.to_string();
-                                                            let edited = ui
-                                                                .add(
-                                                                    TextEdit::singleline(&mut rbuf)
-                                                                        .hint_text("Regex pattern (e.g. ^foo.*bar$)"),
-                                                                )
-                                                                .changed();
-                                                            if edited {
-                                                                f.regex_text = ustr(&rbuf);
-                                                                f.rebuild_regex();
-                                                                if f.regex_error.is_none() {
-                                                                    apply_now = true;
+                                                // Filter popup anchored to `btn_resp`
+                                                let mut apply_now = false;
+                                                let mut clear_now = false;
+                                                Popup::from_response(&btn_resp)
+                                                    .layout(Layout::top_down_justified(Align::LEFT))
+                                                    .open_memory(None)
+                                                    .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                                                    .id(popup_id)
+                                                    .align(RectAlign::BOTTOM_START)
+                                                    .width(btn_resp.rect.width())
+                                                    .show(|ui: &mut Ui| {
+                                                        ui.set_min_width(ui.available_width());
+                                                        self.ensure_distinct_for_col(ci);
+                                                        if let Some(fp) = self.current_fp_mut() {
+                                                            let f = &mut fp.filters[ci];
+
+                                                            if f.use_regex {
+                                                                let mut rbuf = f.regex_text.to_string();
+                                                                let edited = ui
+                                                                    .add(
+                                                                        TextEdit::singleline(&mut rbuf)
+                                                                            .hint_text("Regex pattern (e.g. ^foo.*bar$)"),
+                                                                    )
+                                                                    .changed();
+                                                                if edited {
+                                                                    f.regex_text = ustr(&rbuf);
+                                                                    f.rebuild_regex();
+                                                                    if f.regex_error.is_none() {
+                                                                        apply_now = true;
+                                                                    }
                                                                 }
+                                                                if let Some(err) = &f.regex_error {
+                                                                    ui.label(
+                                                                        RichText::new(format!("⚠ Invalid regex: {}", err))
+                                                                            .color(Color32::from_rgb(220, 90, 90))
+                                                                            .size(11.0),
+                                                                    );
+                                                                }
+                                                                ui.add_space(4.0);
                                                             }
-                                                            if let Some(err) = &f.regex_error {
-                                                                ui.label(
-                                                                    RichText::new(format!("⚠ Invalid regex: {}", err))
-                                                                        .color(Color32::from_rgb(220, 90, 90))
-                                                                        .size(11.0),
-                                                                );
+
+                                                            let mut buf = f.search.to_string();
+                                                            if ui
+                                                                .add(TextEdit::singleline(&mut buf).hint_text("Search values..."))
+                                                                .changed()
+                                                            {
+                                                                f.search = ustr(&buf);
                                                             }
                                                             ui.add_space(4.0);
-                                                        }
 
-                                                        let mut buf = f.search.to_string();
-                                                        if ui
-                                                            .add(TextEdit::singleline(&mut buf).hint_text("Search values..."))
-                                                            .changed()
-                                                        {
-                                                            f.search = ustr(&buf);
-                                                        }
-                                                        ui.add_space(4.0);
+                                                            let values_slice: &[Ustr] = f
+                                                                .distinct_cache
+                                                                .as_ref()
+                                                                .map(|v| v.as_slice())
+                                                                .unwrap_or(&[]);
+                                                            let search_lower = f.search.as_str().to_ascii_lowercase();
 
-                                                        let values_slice: &[Ustr] = f
-                                                            .distinct_cache
-                                                            .as_ref()
-                                                            .map(|v| v.as_slice())
-                                                            .unwrap_or(&[]);
-                                                        let search_lower = f.search.as_str().to_ascii_lowercase();
+                                                            let mut selected_set: std::collections::HashSet<Ustr> =
+                                                                f.selected.iter().cloned().collect();
+                                                            egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                                                for val in values_slice.iter() {
+                                                                    if !search_lower.is_empty()
+                                                                        && !val.as_str().to_ascii_lowercase().contains(&search_lower)
+                                                                    {
+                                                                        continue;
+                                                                    }
 
-                                                        let mut selected_set: std::collections::HashSet<Ustr> =
-                                                            f.selected.iter().cloned().collect();
-                                                        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                                                            for val in values_slice.iter() {
-                                                                if !search_lower.is_empty()
-                                                                    && !val.as_str().to_ascii_lowercase().contains(&search_lower)
-                                                                {
-                                                                    continue;
+                                                                    let mut checked = selected_set.contains(val);
+                                                                    if ui.checkbox(&mut checked, val.as_str()).clicked() {
+                                                                        if checked {
+                                                                            selected_set.insert(val.clone());
+                                                                        } else {
+                                                                            selected_set.remove(val);
+                                                                        }
+                                                                        apply_now = true;
+                                                                    }
                                                                 }
+                                                            });
+                                                            f.selected = selected_set.into_iter().collect();
 
-                                                                let mut checked = selected_set.contains(val);
-                                                                if ui.checkbox(&mut checked, val.as_str()).clicked() {
-                                                                    if checked {
-                                                                        selected_set.insert(val.clone());
-                                                                    } else {
-                                                                        selected_set.remove(val);
+                                                            ui.separator();
+                                                            ui.horizontal(|ui| {
+                                                                if ui
+                                                                    .checkbox(&mut f.case_insensitive, "Aa")
+                                                                    .on_hover_text("Case-insensitive")
+                                                                    .changed()
+                                                                {
+                                                                    f.rebuild_regex();
+                                                                    apply_now = true;
+                                                                }
+                                                                if ui
+                                                                    .checkbox(&mut f.use_regex, ".*")
+                                                                    .on_hover_text("Use regex")
+                                                                    .changed()
+                                                                {
+                                                                    f.rebuild_regex();
+                                                                    apply_now = true;
+                                                                }
+                                                                ui.add_space(8.0);
+
+                                                                if ui.button("Select all").clicked() {
+                                                                    if let Some(all) = &f.distinct_cache {
+                                                                        f.selected = all.clone();
                                                                     }
                                                                     apply_now = true;
                                                                 }
-                                                            }
-                                                        });
-                                                        f.selected = selected_set.into_iter().collect();
-
-                                                        ui.separator();
-                                                        ui.horizontal(|ui| {
-                                                            if ui
-                                                                .checkbox(&mut f.case_insensitive, "Aa")
-                                                                .on_hover_text("Case-insensitive")
-                                                                .changed()
-                                                            {
-                                                                f.rebuild_regex();
-                                                                apply_now = true;
-                                                            }
-                                                            if ui
-                                                                .checkbox(&mut f.use_regex, ".*")
-                                                                .on_hover_text("Use regex")
-                                                                .changed()
-                                                            {
-                                                                f.rebuild_regex();
-                                                                apply_now = true;
-                                                            }
-                                                            ui.add_space(8.0);
-
-                                                            if ui.button("Select all").clicked() {
-                                                                if let Some(all) = &f.distinct_cache {
-                                                                    f.selected = all.clone();
+                                                                if ui.button("Clear").clicked() {
+                                                                    f.selected.clear();
+                                                                    clear_now = true;
                                                                 }
-                                                                apply_now = true;
-                                                            }
-                                                            if ui.button("Clear").clicked() {
-                                                                f.selected.clear();
-                                                                clear_now = true;
-                                                            }
-                                                            if ui.button("Apply").clicked() {
-                                                                apply_now = true;
-                                                            }
-                                                        });
-                                                    }
-                                                });
+                                                                if ui.button("Apply").clicked() {
+                                                                    apply_now = true;
+                                                                }
+                                                            });
+                                                        }
+                                                    });
 
-                                            if apply_now || clear_now {
-                                                self.apply_filters_for_current_file();
-                                                self.reload_current_preview_page();
-                                                self.pending_reload = false;
-                                            }
+                                                if apply_now || clear_now {
+                                                    self.apply_filters_for_current_file();
+                                                    self.reload_current_preview_page();
+                                                    self.pending_reload = false;
+                                                }
+                                            });
                                         });
                                     },
                                 );
@@ -431,7 +419,7 @@ impl DataTableArea {
 
             // count rows once per file (if not already counted)
             if fp.total_rows.is_none() {
-                let total = Self::count_rows_for_path(&path_str);
+                let total = util::count_rows_for_path(&path_str);
                 fp.total_rows = Some(total);
                 new_total_rows = Some(total as usize); // update self after dropping fp
                 // Clamp page within new total
@@ -553,7 +541,7 @@ impl DataTableArea {
 
                     // count rows once per file (if not already counted)
                     if fp.total_rows.is_none() {
-                        let total = Self::count_rows_for_path(&path_str);
+                        let total = util::count_rows_for_path(&path_str);
                         fp.total_rows = Some(total);
                         new_total_rows = Some(total as usize); // update self after dropping fp
                         // Clamp page within new total
@@ -715,7 +703,7 @@ impl DataTableArea {
         };
 
         // Count first so we can clamp paging appropriately (byte_records for speed)
-        let total = Self::count_rows_for_path(fp.file_path.as_ref());
+        let total = util::count_rows_for_path(fp.file_path.as_ref());
         fp.total_rows = Some(total);
         self.toal_rows = total as usize;
         self.page = 0;
@@ -761,27 +749,6 @@ impl DataTableArea {
 
         self.files.push(fp);
         self.current_file = self.files.len() - 1;
-    }
-
-    // Draw a crisp vector "X" close button, for font fallback safety.
-    fn close_button(ui: &mut Ui, emphasize: bool) -> egui::Response {
-        let desired = egui::vec2(18.0, 18.0);
-        let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
-
-        let color = if emphasize {
-            Color32::from_white_alpha(230)
-        } else {
-            Color32::from_white_alpha(110)
-        };
-        let stroke = Stroke::new(1.6, color);
-
-        // Draw a crisp X
-        let r = rect.shrink(4.0);
-        let painter = ui.painter();
-        painter.line_segment([r.left_top(), r.right_bottom()], stroke);
-        painter.line_segment([r.right_top(), r.left_bottom()], stroke);
-
-        response
     }
 
     pub fn show_file_tabs(&mut self, ui: &mut Ui) {
@@ -854,7 +821,7 @@ impl DataTableArea {
                                             // Close button at far right (keep small spacing)
                                             ui.add_space(6.0);
                                             let show_close = selected || resp.hovered();
-                                            let close_resp = Self::close_button(ui, show_close)
+                                            let close_resp = util::close_button(ui, show_close)
                                                 .on_hover_text("Close");
                                             close_rect = close_resp.rect;
                                             if close_resp.clicked() {
@@ -1518,32 +1485,6 @@ impl DataTableArea {
         }
     }
 
-    // --- Performance helpers for filtering on large files ---
-    #[inline]
-    fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> HashSet<Vec<u8>> {
-        let mut set = HashSet::with_capacity(selected.len());
-        for v in selected {
-            let mut bytes = v.as_str().as_bytes().to_vec();
-            if case_insensitive {
-                for b in &mut bytes {
-                    *b = b.to_ascii_lowercase();
-                }
-            }
-            set.insert(bytes);
-        }
-        set
-    }
-
-    #[inline]
-    fn lower_ascii_into<'a>(buf: &'a mut Vec<u8>, src: &[u8]) -> &'a [u8] {
-        buf.clear();
-        buf.reserve(src.len());
-        for &b in src {
-            buf.push(b.to_ascii_lowercase());
-        }
-        &buf[..]
-    }
-
     pub fn apply_filters_for_current_file(&mut self) {
         let Some(fp) = self.current_fp_mut() else {
             return;
@@ -1586,7 +1527,7 @@ impl DataTableArea {
                     continue;
                 }
                 let set = if !f.selected.is_empty() {
-                    Some(Self::selected_set_bytes(&f.selected, f.case_insensitive))
+                    Some(util::selected_set_bytes(&f.selected, f.case_insensitive))
                 } else {
                     None
                 };
@@ -1620,7 +1561,7 @@ impl DataTableArea {
                     // Set membership (bytes)
                     if let Some(set) = af.set.as_ref() {
                         let matched = if af.casei {
-                            let lowered = Self::lower_ascii_into(&mut scratch, val_bytes);
+                            let lowered = util::lower_ascii_into(&mut scratch, val_bytes);
                             set.contains::<[u8]>(lowered)
                         } else {
                             set.contains::<[u8]>(val_bytes)
@@ -1720,77 +1661,6 @@ impl DataTableArea {
             fp.filtered_indices = Some(out);
             fp.page = 0;
         }
-    }
-
-    // Draw a small up/down triangle as a clickable icon button (font-independent).
-    fn sort_triangle_button(ui: &mut Ui, up: bool, active: bool) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
-        let r = rect.shrink2(egui::vec2(3.0, 3.0));
-        let (p1, p2, p3) = if up {
-            (
-                egui::pos2(r.center().x, r.top()),
-                egui::pos2(r.left(), r.bottom()),
-                egui::pos2(r.right(), r.bottom()),
-            )
-        } else {
-            (
-                egui::pos2(r.left(), r.top()),
-                egui::pos2(r.right(), r.top()),
-                egui::pos2(r.center().x, r.bottom()),
-            )
-        };
-        let fill = if active {
-            Color32::from_rgb(0, 200, 120)
-        } else if response.hovered() {
-            Color32::from_gray(210)
-        } else {
-            Color32::from_gray(170)
-        };
-        let stroke = Stroke::new(1.0, Color32::from_gray(60));
-        ui.painter()
-            .add(Shape::convex_polygon(vec![p1, p2, p3], fill, stroke));
-        response
-    }
-
-    // Draw a compact funnel (filter) icon as a clickable button.
-    fn filter_icon_button(ui: &mut Ui, active: bool) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(18.0, 16.0), egui::Sense::click());
-        let r = rect.shrink2(egui::vec2(3.0, 2.0));
-
-        let fill = if active {
-            Color32::from_rgb(0, 200, 120)
-        } else if response.hovered() {
-            Color32::from_gray(210)
-        } else {
-            Color32::from_gray(170)
-        };
-        let stroke = Stroke::new(1.0, Color32::from_gray(60));
-
-        // Top trapezoid
-        let top_h = (r.height() * 0.55).clamp(6.0, 9.0);
-        let stem_w = (r.width() * 0.18).clamp(2.0, 3.0);
-        let mid_y = r.top() + top_h;
-        let cx = r.center().x;
-        let trapezoid = vec![
-            egui::pos2(r.left(), r.top()),
-            egui::pos2(r.right(), r.top()),
-            egui::pos2(cx + stem_w, mid_y),
-            egui::pos2(cx - stem_w, mid_y),
-        ];
-        ui.painter()
-            .add(Shape::convex_polygon(trapezoid, fill, stroke));
-
-        // Stem rectangle
-        let stem_h = (r.height() - top_h - 1.0).max(3.0);
-        let stem = vec![
-            egui::pos2(cx - stem_w, mid_y),
-            egui::pos2(cx + stem_w, mid_y),
-            egui::pos2(cx + stem_w, mid_y + stem_h),
-            egui::pos2(cx - stem_w, mid_y + stem_h),
-        ];
-        ui.painter().add(Shape::convex_polygon(stem, fill, stroke));
-
-        response
     }
 
     fn on_sort_click(&mut self, col: usize, descending: bool) {
