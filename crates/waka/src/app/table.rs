@@ -1,7 +1,6 @@
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
-use std::{collections::BTreeSet, path::Path};
 
-use ahash::AHashSet;
 use anyhow::anyhow;
 use bon::Builder;
 use csv::Writer;
@@ -15,7 +14,6 @@ use eframe::egui::{
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
-use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
@@ -158,7 +156,7 @@ impl DataTableArea {
     /// while sharing the same horizontal scroll as the body.
     pub fn show_preview_table(&mut self, ui: &mut Ui) {
         let (headers, file_id) = match self.current_fp() {
-            Some(fp) => (fp.headers.clone(), fp.file_path),
+            Some(fp) => (fp.headers.clone(), fp.file_path.clone()),
             None => return,
         };
         let col_width: f32 = 180.0;
@@ -265,7 +263,9 @@ impl DataTableArea {
                                                 ui.add_space(4.0);
 
                                                 let values_slice: &[Ustr] = f
-                                                    .distinct_cache.as_deref()
+                                                    .distinct_cache
+                                                    .as_ref()
+                                                    .map(|v| v.as_slice())
                                                     .unwrap_or(&[]);
                                                 let search_lower = f.search.as_str().to_ascii_lowercase();
 
@@ -282,7 +282,7 @@ impl DataTableArea {
                                                         let mut checked = selected_set.contains(val);
                                                         if ui.checkbox(&mut checked, val.as_str()).clicked() {
                                                             if checked {
-                                                                selected_set.insert(*val);
+                                                                selected_set.insert(val.clone());
                                                             } else {
                                                                 selected_set.remove(val);
                                                             }
@@ -744,7 +744,9 @@ impl DataTableArea {
                                                 Color32::from_rgb(210, 210, 210)
                                             };
                                             let label = egui::Label::new(
-                                                RichText::new(name).size(11.0).color(text_color),
+                                                RichText::new(name.clone())
+                                                    .size(11.0)
+                                                    .color(text_color),
                                             )
                                             .truncate();
                                             let resp = ui
@@ -854,62 +856,64 @@ impl DataTableArea {
         let cfg = Config::new(Some(&path_str));
 
         // If we have filtered indices and only_filtered is true, restrict to them; else stream all rows.
-        if only_filtered && let Some(ref filt) = fp.filtered_indices {
-            // Fast-path using the qsv index when available
-            if let Ok(Some(mut idx)) = cfg.indexed() {
-                // Iterate contiguous chunks to minimize seeking, mirroring reload logic
-                let slice = &filt[..];
-                let mut i = 0usize;
-                while i < slice.len() {
-                    let base = slice[i];
-                    let mut len = 1usize;
-                    while i + len < slice.len() && slice[i + len] == base + len as u64 {
-                        len += 1;
+        if only_filtered {
+            if let Some(ref filt) = fp.filtered_indices {
+                // Fast-path using the qsv index when available
+                if let Ok(Some(mut idx)) = cfg.indexed() {
+                    // Iterate contiguous chunks to minimize seeking, mirroring reload logic
+                    let slice = &filt[..];
+                    let mut i = 0usize;
+                    while i < slice.len() {
+                        let base = slice[i];
+                        let mut len = 1usize;
+                        while i + len < slice.len() && slice[i + len] == base + len as u64 {
+                            len += 1;
+                        }
+                        idx.seek(base)
+                            .map_err(|e| anyhow!("Index seek error: {e}"))?;
+                        for rec_res in idx.byte_records().take(len) {
+                            let brec = rec_res?;
+                            wtr.write_byte_record(&brec)?;
+                        }
+                        i += len;
                     }
-                    idx.seek(base)
-                        .map_err(|e| anyhow!("Index seek error: {e}"))?;
-                    for rec_res in idx.byte_records().take(len) {
-                        let brec = rec_res?;
-                        wtr.write_byte_record(&brec)?;
-                    }
-                    i += len;
+                    wtr.flush().map_err(|e| anyhow!("Flush failed: {e}"))?;
+                    return Ok(());
                 }
-                wtr.flush().map_err(|e| anyhow!("Flush failed: {e}"))?;
-                return Ok(());
-            }
 
-            // Fallback: stream from reader and pick wanted rows
-            if let Ok(mut rdr) = cfg.reader() {
-                // Ensure header row is consumed before records()
-                let _ = rdr.headers();
-                let mut wanted_iter = filt.iter().copied();
-                let mut next = wanted_iter.next();
-                for (ri, rec_res) in rdr.records().enumerate() {
-                    match next {
-                        Some(want) if ri as u64 == want => {
-                            let rec = rec_res.map_err(|e| anyhow!("Row read error: {e}"))?;
-                            wtr.write_record(rec.iter())
-                                .map_err(|e| anyhow!("Write row failed: {e}"))?;
-                            next = wanted_iter.next();
-                            if next.is_none() {
-                                break;
+                // Fallback: stream from reader and pick wanted rows
+                if let Ok(mut rdr) = cfg.reader() {
+                    // Ensure header row is consumed before records()
+                    let _ = rdr.headers();
+                    let mut wanted_iter = filt.iter().copied();
+                    let mut next = wanted_iter.next();
+                    for (ri, rec_res) in rdr.records().enumerate() {
+                        match next {
+                            Some(want) if ri as u64 == want => {
+                                let rec = rec_res.map_err(|e| anyhow!("Row read error: {e}"))?;
+                                wtr.write_record(rec.iter())
+                                    .map_err(|e| anyhow!("Write row failed: {e}"))?;
+                                next = wanted_iter.next();
+                                if next.is_none() {
+                                    break;
+                                }
                             }
-                        }
-                        Some(want) if (ri as u64) < want => continue,
-                        _ => {
-                            if next.is_none() {
-                                break;
+                            Some(want) if (ri as u64) < want => continue,
+                            _ => {
+                                if next.is_none() {
+                                    break;
+                                }
                             }
                         }
                     }
+                    wtr.flush().map_err(|e| anyhow!("Flush failed: {e}"))?;
+                    return Ok(());
+                } else {
+                    return Err(anyhow!("Unable to open CSV reader for filtered export"));
                 }
-                wtr.flush().map_err(|e| anyhow!("Flush failed: {e}"))?;
-                return Ok(());
-            } else {
-                return Err(anyhow!("Unable to open CSV reader for filtered export"));
             }
+            // If only_filtered is requested but no filters are active, fall through to export all rows.
         }
-        // If only_filtered is requested but no filters are active, fall through to export all rows.
 
         // No active filters (or exporting all rows): stream everything
         if let Ok(mut rdr) = cfg.reader() {
@@ -987,70 +991,73 @@ impl DataTableArea {
         };
 
         // If we have filtered indices and only_filtered is true, restrict to them; else stream all rows.
-        if only_filtered && let Some(ref filt) = fp.filtered_indices {
-            if let Ok(Some(mut idx)) = cfg.indexed() {
-                // iterate contiguous chunks (mirrors paging logic)
-                let slice = &filt[..];
-                let mut i = 0usize;
-                while i < slice.len() {
-                    let base = slice[i];
-                    let mut len = 1usize;
-                    while i + len < slice.len() && slice[i + len] == base + len as u64 {
-                        len += 1;
-                    }
-                    idx.seek(base)
-                        .map_err(|e| anyhow!("Index seek error: {e}"))?;
-                    for rec_res in idx.byte_records().take(len) {
-                        let brec = rec_res?;
-                        let mut vals: Vec<String> =
-                            Vec::with_capacity(headers.len().max(brec.len()));
-                        vals.extend((0..headers.len()).map(|ci| {
-                            brec.get(ci)
-                                .map(|b| String::from_utf8_lossy(b).into_owned())
-                                .unwrap_or_default()
-                        }));
-                        emit_obj(&vals)?;
-                    }
-                    i += len;
-                }
-                write!(&mut out, "]")?;
-                out.flush()?;
-                return Ok(());
-            }
-            // Fallback: stream from reader and pick wanted rows
-            if let Ok(mut rdr) = cfg.reader() {
-                // Ensure header is consumed
-                let _ = rdr.headers();
-                let mut wanted_iter = filt.iter().copied();
-                let mut next = wanted_iter.next();
-                for (ri, rec_res) in rdr.records().enumerate() {
-                    match next {
-                        Some(want) if ri as u64 == want => {
-                            let rec = rec_res?;
+        if only_filtered {
+            if let Some(ref filt) = fp.filtered_indices {
+                if let Ok(Some(mut idx)) = cfg.indexed() {
+                    // iterate contiguous chunks (mirrors paging logic)
+                    let slice = &filt[..];
+                    let mut i = 0usize;
+                    while i < slice.len() {
+                        let base = slice[i];
+                        let mut len = 1usize;
+                        while i + len < slice.len() && slice[i + len] == base + len as u64 {
+                            len += 1;
+                        }
+                        idx.seek(base)
+                            .map_err(|e| anyhow!("Index seek error: {e}"))?;
+                        for rec_res in idx.byte_records().take(len) {
+                            let brec = rec_res?;
                             let mut vals: Vec<String> =
-                                Vec::with_capacity(headers.len().max(rec.len()));
-                            vals.extend(
-                                (0..headers.len()).map(|ci| rec.get(ci).unwrap_or("").to_string()),
-                            );
+                                Vec::with_capacity(headers.len().max(brec.len()));
+                            vals.extend((0..headers.len()).map(|ci| {
+                                brec.get(ci)
+                                    .map(|b| String::from_utf8_lossy(b).into_owned())
+                                    .unwrap_or_default()
+                            }));
                             emit_obj(&vals)?;
-                            next = wanted_iter.next();
-                            if next.is_none() {
-                                break;
-                            }
                         }
-                        Some(want) if (ri as u64) < want => continue,
-                        _ => {
-                            if next.is_none() {
-                                break;
+                        i += len;
+                    }
+                    write!(&mut out, "]")?;
+                    out.flush()?;
+                    return Ok(());
+                }
+                // Fallback: stream from reader and pick wanted rows
+                if let Ok(mut rdr) = cfg.reader() {
+                    // Ensure header is consumed
+                    let _ = rdr.headers();
+                    let mut wanted_iter = filt.iter().copied();
+                    let mut next = wanted_iter.next();
+                    for (ri, rec_res) in rdr.records().enumerate() {
+                        match next {
+                            Some(want) if ri as u64 == want => {
+                                let rec = rec_res?;
+                                let mut vals: Vec<String> =
+                                    Vec::with_capacity(headers.len().max(rec.len()));
+                                vals.extend(
+                                    (0..headers.len())
+                                        .map(|ci| rec.get(ci).unwrap_or("").to_string()),
+                                );
+                                emit_obj(&vals)?;
+                                next = wanted_iter.next();
+                                if next.is_none() {
+                                    break;
+                                }
+                            }
+                            Some(want) if (ri as u64) < want => continue,
+                            _ => {
+                                if next.is_none() {
+                                    break;
+                                }
                             }
                         }
                     }
+                    write!(&mut out, "]")?;
+                    out.flush()?;
+                    return Ok(());
+                } else {
+                    return Err(anyhow!("Unable to open CSV reader for filtered export"));
                 }
-                write!(&mut out, "]")?;
-                out.flush()?;
-                return Ok(());
-            } else {
-                return Err(anyhow!("Unable to open CSV reader for filtered export"));
             }
         }
 
@@ -1095,7 +1102,11 @@ impl DataTableArea {
         self.write_rows_to_csv_writer(fp, wtr, only_filtered)
     }
 
-    fn export_current_to_xlsx_path(&self, dest: &Path, only_filtered: bool) -> anyhow::Result<()> {
+    fn export_current_to_xlsx_path(
+        &self,
+        dest: &PathBuf,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
         let temp_csv = self.make_temp_csv_for_current(only_filtered)?;
         let options = Options::builder()
             .delimiter(Some(b',')) // we wrote comma-delimited temp CSV
@@ -1107,7 +1118,11 @@ impl DataTableArea {
         Ok(())
     }
 
-    fn export_current_to_ods_path(&self, dest: &Path, only_filtered: bool) -> anyhow::Result<()> {
+    fn export_current_to_ods_path(
+        &self,
+        dest: &PathBuf,
+        only_filtered: bool,
+    ) -> anyhow::Result<()> {
         let temp_csv = self.make_temp_csv_for_current(only_filtered)?;
         let options = Options::builder()
             .delimiter(Some(b',')) // we wrote comma-delimited temp CSV
@@ -1121,7 +1136,7 @@ impl DataTableArea {
 
     fn export_current_to_parquet_dir(
         &self,
-        dest_dir: &Path,
+        dest_dir: &PathBuf,
         only_filtered: bool,
     ) -> anyhow::Result<()> {
         let temp_csv = self.make_temp_csv_for_current(only_filtered)?;
@@ -1139,7 +1154,7 @@ impl DataTableArea {
 
     fn default_export_filename(&self, ext: &str) -> String {
         if let Some(fp) = self.current_fp() {
-            let base = util::display_name(&fp.file_path);
+            let base = crate::util::display_name(&fp.file_path);
             format!("{}_filtered.{}", base, ext)
         } else {
             format!("export_filtered.{}", ext)
@@ -1380,23 +1395,23 @@ impl DataTableArea {
 
         if let Ok(Some(mut idx)) = cfg.indexed() {
             for rec_res in idx.byte_records() {
-                if let Ok(brec) = rec_res
-                    && let Some(val) = brec.get(col)
-                {
-                    set.insert(ustr(&String::from_utf8_lossy(val)));
-                    if set.len() >= limit {
-                        break;
+                if let Ok(brec) = rec_res {
+                    if let Some(val) = brec.get(col) {
+                        set.insert(ustr(&String::from_utf8_lossy(val)));
+                        if set.len() >= limit {
+                            break;
+                        }
                     }
                 }
             }
         } else if let Ok(mut rdr) = cfg.reader() {
             for rec_res in rdr.records() {
-                if let Ok(rec) = rec_res
-                    && let Some(val) = rec.get(col)
-                {
-                    set.insert(ustr(val));
-                    if set.len() >= limit {
-                        break;
+                if let Ok(rec) = rec_res {
+                    if let Some(val) = rec.get(col) {
+                        set.insert(ustr(val));
+                        if set.len() >= limit {
+                            break;
+                        }
                     }
                 }
             }
@@ -1410,12 +1425,14 @@ impl DataTableArea {
 
     // --- Performance helpers for filtering on large files ---
     #[inline]
-    fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> AHashSet<Vec<u8>> {
-        let mut set: AHashSet<Vec<u8>> = AHashSet::with_capacity(selected.len());
+    fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> HashSet<Vec<u8>> {
+        let mut set = HashSet::with_capacity(selected.len());
         for v in selected {
             let mut bytes = v.as_str().as_bytes().to_vec();
             if case_insensitive {
-                bytes.make_ascii_lowercase(); // from bstr::ByteVec
+                for b in &mut bytes {
+                    *b = b.to_ascii_lowercase();
+                }
             }
             set.insert(bytes);
         }
@@ -1425,8 +1442,10 @@ impl DataTableArea {
     #[inline]
     fn lower_ascii_into<'a>(buf: &'a mut Vec<u8>, src: &[u8]) -> &'a [u8] {
         buf.clear();
-        buf.extend_from_slice(src);
-        buf.make_ascii_lowercase();
+        buf.reserve(src.len());
+        for &b in src {
+            buf.push(b.to_ascii_lowercase());
+        }
         &buf[..]
     }
 
@@ -1443,7 +1462,7 @@ impl DataTableArea {
         // and one for string records (reader).
         struct ActiveBytes {
             col: usize,
-            set: Option<AHashSet<Vec<u8>>>,
+            set: Option<HashSet<Vec<u8>>>, // normalized per case-insensitive flag
             casei: bool,
             regex: Option<Regex>,
         }
@@ -1465,7 +1484,8 @@ impl DataTableArea {
         // Try fast byte-indexed path
         if let Ok(Some(mut idx)) = cfg.indexed() {
             // Prepare ActiveBytes using byte-normalized sets
-            let mut active_b: Vec<ActiveBytes> = Vec::with_capacity(fp.filters.len());
+            let mut active_b: Vec<ActiveBytes> = Vec::new();
+            active_b.reserve(fp.filters.len());
             for (i, f) in fp.filters.iter().enumerate() {
                 if f.selected.is_empty() && !f.use_regex {
                     continue;
@@ -1485,10 +1505,6 @@ impl DataTableArea {
                     set,
                     casei: f.case_insensitive,
                     regex: rx,
-                });
-                active_b.sort_by_key(|af| {
-                    let sz = af.set.as_ref().map(|s| s.len()).unwrap_or(usize::MAX);
-                    (sz == usize::MAX, sz) // sets first; smaller first; regex-only last
                 });
             }
 
@@ -1510,9 +1526,9 @@ impl DataTableArea {
                     if let Some(set) = af.set.as_ref() {
                         let matched = if af.casei {
                             let lowered = Self::lower_ascii_into(&mut scratch, val_bytes);
-                            set.contains(lowered)
+                            set.contains::<[u8]>(lowered)
                         } else {
-                            set.contains(val_bytes)
+                            set.contains::<[u8]>(val_bytes)
                         };
                         if !matched {
                             keep = false;
@@ -1521,16 +1537,19 @@ impl DataTableArea {
                     }
 
                     // Regex (needs &str); only run if still keeping
-                    if keep && let Some(rx) = af.regex.as_ref() {
-                        let v: std::borrow::Cow<'_, str> = match std::str::from_utf8(val_bytes) {
-                            Ok(s) => std::borrow::Cow::Borrowed(s),
-                            Err(_) => std::borrow::Cow::Owned(
-                                String::from_utf8_lossy(val_bytes).into_owned(),
-                            ),
-                        };
-                        if !rx.is_match(&v) {
-                            keep = false;
-                            break;
+                    if keep {
+                        if let Some(rx) = af.regex.as_ref() {
+                            let v: std::borrow::Cow<'_, str> = match std::str::from_utf8(val_bytes)
+                            {
+                                Ok(s) => std::borrow::Cow::Borrowed(s),
+                                Err(_) => std::borrow::Cow::Owned(
+                                    String::from_utf8_lossy(val_bytes).into_owned(),
+                                ),
+                            };
+                            if !rx.is_match(&v) {
+                                keep = false;
+                                break;
+                            }
                         }
                     }
                 }
@@ -1545,40 +1564,29 @@ impl DataTableArea {
         }
 
         // Fallback: stream with CSV reader (string records).
-        // Keep Unicode-aware normalization via util::norm, but use AHashSet and rayon.
-        #[derive(Clone)]
-        struct ActiveStr {
-            col: usize,
-            set: AHashSet<String>,
-            casei: bool,
-            regex: Option<Regex>,
-        }
-
-        let mut active: Vec<ActiveStr> = Vec::new();
+        // Keep the existing normalization logic for correctness (Unicode-aware via util::norm).
+        let mut active: Vec<(usize, HashSet<String>, bool /*casei*/, Option<Regex>)> = Vec::new();
         for (i, f) in fp.filters.iter().enumerate() {
             if f.selected.is_empty() && !f.use_regex {
                 continue;
             }
             let casei = f.case_insensitive;
-            let set: AHashSet<String> = if !f.selected.is_empty() {
+            let set: HashSet<String> = if !f.selected.is_empty() {
                 f.selected
                     .iter()
                     .map(|v| crate::util::norm(v, casei).to_string())
                     .collect()
             } else {
-                AHashSet::new()
+                HashSet::new()
             };
+
             let rx = if f.use_regex {
                 f.compiled_regex.clone()
             } else {
                 None
             };
-            active.push(ActiveStr {
-                col: i,
-                set,
-                casei,
-                regex: rx,
-            });
+
+            active.push((i, set, casei, rx));
         }
 
         if active.is_empty() {
@@ -1587,50 +1595,34 @@ impl DataTableArea {
             return;
         }
 
-        // Order by selectivity: sets first (smaller first), regex-only last
-        active.sort_by_key(|af| {
-            let sz = if af.set.is_empty() {
-                usize::MAX
-            } else {
-                af.set.len()
-            };
-            (af.set.is_empty(), sz)
-        });
-
-        // Read & filter in parallel using par_bridge
-        if let Ok(rdr) = cfg.reader() {
-            let matches: Vec<u64> = rdr
-                .into_records()
-                .enumerate()
-                .par_bridge()
-                .filter_map(|(ri, rec_res)| {
-                    let rec = match rec_res {
-                        Ok(r) => r,
-                        Err(_) => return None,
-                    };
+        if let Ok(mut rdr) = cfg.reader() {
+            for (ri, rec_res) in rdr.records().enumerate() {
+                if let Ok(rec) = rec_res {
                     let mut keep = true;
-                    for af in active.iter() {
-                        let val = rec.get(af.col).unwrap_or("");
-                        if !af.set.is_empty() {
-                            let key = crate::util::norm(val, af.casei);
-                            if !af.set.contains(key.as_ref()) {
+                    for (col, set, casei, rx) in active.iter() {
+                        let val = rec.get(*col).unwrap_or("");
+                        // If there are selected values, enforce membership
+                        if !set.is_empty() {
+                            let key = crate::util::norm(val, *casei);
+                            if !set.contains(key.as_ref()) {
                                 keep = false;
                                 break;
                             }
                         }
-                        if keep
-                            && let Some(r) = &af.regex
-                            && !r.is_match(val)
-                        {
-                            keep = false;
-                            break;
+                        // If a regex is active, enforce regex match (on original value)
+                        if let Some(r) = rx {
+                            if !r.is_match(val) {
+                                keep = false;
+                                break;
+                            }
                         }
                     }
-                    if keep { Some(ri as u64) } else { None }
-                })
-                .collect();
-
-            fp.filtered_indices = Some(matches);
+                    if keep {
+                        out.push(ri as u64);
+                    }
+                }
+            }
+            fp.filtered_indices = Some(out);
             fp.page = 0;
         }
     }

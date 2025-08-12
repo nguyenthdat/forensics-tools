@@ -42,7 +42,4 @@ egui_extras.workspace = true
 rfd.workspace = true
 tempfile.workspace = true
 csv.workspace = true
-csvs_convert = { version = "0.12.1", features = ["converters", "parquet"] }
-ahash = "0.8.12"
-rayon.workspace = true
-bstr = { version = "1.12.0", features = ["serde"] }
+csvs_convert = { workspace = true, features = ["converters", "parquet"] }

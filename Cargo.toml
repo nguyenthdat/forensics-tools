@@ -13,6 +13,7 @@ license = "MIT"
 [workspace.dependencies]
 mtf = { version = "0.6.1", default-features = false, path = "crates/mft" }
 qsv = { version = "*", default-features = false, path = "crates/qsv" }
+csvs_convert = { version = "0.12.1", features = ["converters", "parquet"] }
 
 # Core dependencies
 tokio = { version = "1", features = ["full"] }
@@ -173,8 +174,5 @@ rust_decimal = { git = "https://github.com/paupino/rust-decimal", branch = "v1" 
 
 # use our patched fork of self_update to bump zip 2 to 4, until our PR is merged
 self_update = { git = "https://github.com/jqnatividad/self_update", branch = "bump-deps-july2025" }
-
-# use our patched fork of sled to get rid of unmaintained instant
-sled = { git = "https://github.com/spacejam/sled", branch = "main" }
 
 ord_subset = { git = "https://github.com/nguyenthdat/ord_subset", branch = "master" }
