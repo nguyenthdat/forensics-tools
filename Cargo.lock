@@ -10915,6 +10915,7 @@ dependencies = [
  "epaint",
  "ext-sort",
  "mimalloc",
+ "num_cpus",
  "polars-sql",
  "qsv",
  "regex",

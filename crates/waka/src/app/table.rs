@@ -101,6 +101,8 @@ pub struct FilePreview {
     pub load_error: Option<Ustr>,
     pub filtered_indices: Option<Vec<u64>>,
     pub sorted_indices: Option<Vec<u64>>,
+    pub sort_col: Option<usize>,
+    pub sort_desc: bool,
 }
 
 #[derive(Debug, Clone, Builder)]
@@ -114,8 +116,6 @@ pub struct DataTableArea {
     pub export_only_filtered: bool,
     pub export_status: Option<Ustr>,
     pub pending_reload: bool,
-    pub sort_col: Option<usize>,
-    pub sort_desc: bool,
 }
 
 impl Default for DataTableArea {
@@ -130,8 +130,6 @@ impl Default for DataTableArea {
             export_only_filtered: true,
             export_status: None,
             pending_reload: false,
-            sort_col: None,
-            sort_desc: false,
         }
     }
 }
@@ -209,13 +207,14 @@ impl DataTableArea {
                                                 }
 
                                                 // Sort buttons (vector triangles so we don't depend on font glyphs)
-                                                let is_active_sort = self.sort_col == Some(ci);
-                                                let desc_resp = util::sort_triangle_button(ui, false, is_active_sort && self.sort_desc)
+                                                let is_active_sort = self.current_fp().map_or(false, |fp| fp.sort_col == Some(ci));
+                                                let is_sort_desc = self.current_fp().map_or(false, |fp| fp.sort_desc);
+                                                let desc_resp = util::sort_triangle_button(ui, false, is_active_sort && is_sort_desc)
                                                     .on_hover_text("Sort descending");
                                                 if desc_resp.clicked() {
                                                     self.on_sort_click(ci, true);
                                                 }
-                                                let asc_resp = util::sort_triangle_button(ui, true, is_active_sort && !self.sort_desc)
+                                                let asc_resp = util::sort_triangle_button(ui, true, is_active_sort && !is_sort_desc)
                                                     .on_hover_text("Sort ascending");
                                                 if asc_resp.clicked() {
                                                     self.on_sort_click(ci, false);
@@ -698,6 +697,8 @@ impl DataTableArea {
             load_error: None,
             filtered_indices: None,
             sorted_indices: None,
+            sort_col: None,
+            sort_desc: false,
         };
 
         // Count first so we can clamp paging appropriately (byte_records for speed)
@@ -1635,11 +1636,13 @@ impl DataTableArea {
     }
 
     fn on_sort_click(&mut self, col: usize, descending: bool) {
-        // Run sort and update UI state
+        // Run sort and update per-file UI state
         match self.sort_current_by_column(col, descending) {
             Ok(()) => {
-                self.sort_col = Some(col);
-                self.sort_desc = descending;
+                if let Some(fp) = self.current_fp_mut() {
+                    fp.sort_col = Some(col);
+                    fp.sort_desc = descending;
+                }
                 self.export_status = Some(ustr("✅ Sorted"));
             }
             Err(e) => {

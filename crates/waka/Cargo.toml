@@ -46,3 +46,4 @@ csvs_convert = { workspace = true, features = ["converters", "parquet"] }
 ext-sort = { version = "0.1", default-features = false }
 atoi_simd = "0.16.1"
 simdutf8 = { version = "0.1.5", features = ["aarch64_neon", "aarch64_neon_prefetch"] }
+num_cpus.workspace = true

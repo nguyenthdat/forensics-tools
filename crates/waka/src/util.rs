@@ -2,10 +2,10 @@ use anyhow::anyhow;
 use eframe::egui::{self, Ui};
 use epaint::{Color32, Shape, Stroke};
 use ext_sort::{ExternalSorter, ExternalSorterBuilder, LimitedBufferBuilder};
+use num_cpus;
 use qsv::{
     cmd::extdedup::calculate_memory_limit,
     config::{Config, Delimiter},
-    util,
 };
 use std::path::Path;
 use std::{
@@ -15,6 +15,60 @@ use std::{
 use ustr::Ustr;
 
 const RW_BUFFER_CAPACITY: usize = 1_000_000; // 1 MB
+
+// To mimic Excel-like sort, we try to sort numerically when a field looks like an integer.
+// Otherwise we sort case-insensitive as text. We also insert a column separator between
+// composite keys to avoid collisions like ["ab","c"] vs ["a","bc"].
+const SORT_COL_SEP: char = '\u{1F}'; // unit separator, unlikely in data
+const INT_PAD: usize = 39; // support up to 39-digit integers lexicographically
+
+fn encode_integer_key(buf: &mut String, s: &str) -> bool {
+    // accept optional leading '-' and digits only
+    if s.is_empty() {
+        return false;
+    }
+    let (neg, digits) = if let Some(rest) = s.strip_prefix('-') {
+        (true, rest)
+    } else {
+        (false, s)
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    // too many digits? treat as text instead of risking overflow
+    if digits.len() > INT_PAD {
+        return false;
+    }
+
+    // build zero-padded magnitude
+    let mut mag = String::with_capacity(INT_PAD);
+    for _ in 0..(INT_PAD - digits.len()) {
+        mag.push('0');
+    }
+    mag.push_str(digits);
+
+    // prefix encodes sign so that negatives < positives
+    if neg {
+        buf.push('0'); // bucket for negative numbers
+        // 9's complement so that lex ascending matches numeric ascending for negatives
+        for ch in mag.bytes() {
+            let d = ch - b'0';
+            buf.push(char::from(b'9' - d));
+        }
+    } else {
+        buf.push('1'); // bucket for positive numbers (and zero)
+        buf.push_str(&mag);
+    }
+    true
+}
+
+fn append_excel_like_key(out: &mut String, field_str: &str) {
+    // Try integer first; if not, treat as text (case-insensitive)
+    if !encode_integer_key(out, field_str.trim()) {
+        out.push('2'); // bucket for text
+        out.push_str(&field_str.to_ascii_lowercase());
+    }
+}
 
 pub fn display_name(path: &str) -> Ustr {
     Path::new(path)
@@ -29,183 +83,6 @@ pub fn norm<'a>(s: &'a str, casei: bool) -> std::borrow::Cow<'a, str> {
     } else {
         std::borrow::Cow::Borrowed(s)
     }
-}
-
-/// Library-friendly external CSV sort that writes the sorted rows to `output_path`.
-/// Columns are 0-based indices into the CSV. Requires an index (same as CLI).
-/// If `no_headers` is false, the header row is preserved as the first line.
-#[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
-pub fn external_sort_csv_by_columns(
-    input_path: &str,
-    output_path: &Path,
-    columns: &[usize],
-    reverse: bool,
-    delimiter: Option<Delimiter>,
-    tmp_dir: &str,
-    memory_limit: Option<u64>,
-    jobs: Option<usize>,
-    no_headers: bool,
-) -> anyhow::Result<()> {
-    // Validate tmp dir
-    if !Path::new(tmp_dir).exists() {
-        return Err(anyhow!("tmp-dir '{tmp_dir}' does not exist"));
-    }
-
-    // Build sorter with limits similar to CLI
-    let mem_limited_buffer_bytes = calculate_memory_limit(memory_limit);
-    tracing::info!("{mem_limited_buffer_bytes} bytes used for in memory mergesort buffer...");
-
-    let sorter: ExternalSorter<String, io::Error, LimitedBufferBuilder> =
-        match ExternalSorterBuilder::new()
-            .with_tmp_dir(Path::new(tmp_dir))
-            .with_buffer(LimitedBufferBuilder::new(
-                mem_limited_buffer_bytes as usize,
-                true,
-            ))
-            .with_rw_buf_size(RW_BUFFER_CAPACITY)
-            .with_threads_number(util::njobs(jobs))
-            .build()
-        {
-            Ok(sorter) => sorter,
-            Err(e) => {
-                return Err(anyhow!("cannot create external sorter: {e}"));
-            }
-        };
-
-    // Reader config mirrors CLI behavior
-    let rconfig = Config::new(Some(&input_path.to_string()))
-        .delimiter(delimiter)
-        .no_headers(no_headers);
-
-    // Require an index in CSV mode (same as CLI)
-    let mut idxfile = match rconfig.indexed() {
-        Ok(idx) => {
-            if idx.is_none() {
-                return Err(anyhow!("extsort CSV mode requires an index"));
-            }
-            idx.unwrap()
-        }
-        _ => {
-            return Err(anyhow!("extsort CSV mode requires an index"));
-        }
-    };
-
-    let mut input_rdr = rconfig.reader()?;
-
-    // Prepare a temp text file of "sort_key|{padded_position}"
-    let linewtr_tfile = tempfile::NamedTempFile::new_in(tmp_dir)?;
-    let mut line_wtr = io::BufWriter::with_capacity(RW_BUFFER_CAPACITY, linewtr_tfile.as_file());
-
-    let headers = input_rdr.byte_headers()?.clone();
-
-    // Pre-validate and clamp requested columns to header width
-    let max_col = headers.len();
-    let cols: Vec<usize> = columns.iter().copied().filter(|&c| c < max_col).collect();
-    if cols.is_empty() {
-        return Err(anyhow!("no valid column indices provided for sort"));
-    }
-
-    // Working buffers
-    let mut sort_key = String::with_capacity(64);
-    let mut utf8_string = String::with_capacity(64);
-    let mut curr_row = csv::ByteRecord::new();
-
-    let rowcount = idxfile.count();
-    let width = rowcount.to_string().len();
-
-    for row in input_rdr.byte_records() {
-        curr_row.clone_from(&row?);
-        sort_key.clear();
-        for &ci in &cols {
-            let field = curr_row.get(ci).unwrap_or(b"");
-            if let Ok(s_utf8) = simdutf8::basic::from_utf8(field) {
-                sort_key.push_str(s_utf8);
-            } else {
-                utf8_string.clear();
-                utf8_string.push_str(&String::from_utf8_lossy(field));
-                sort_key.push_str(&utf8_string);
-            }
-        }
-        let idx_position = curr_row.position().unwrap();
-        writeln!(line_wtr, "{sort_key}|{:01$}", idx_position.line(), width)?;
-    }
-    line_wtr.flush()?;
-
-    let line_rdr = io::BufReader::with_capacity(
-        RW_BUFFER_CAPACITY,
-        std::fs::File::open(linewtr_tfile.path())?,
-    );
-
-    let compare = |a: &String, b: &String| {
-        if reverse {
-            a.cmp(b).reverse()
-        } else {
-            a.cmp(b)
-        }
-    };
-
-    // External sort of the temp key file
-    let sorted = match sorter.sort_by(line_rdr.lines(), compare) {
-        Ok(sorted) => sorted,
-        Err(e) => {
-            return Err(anyhow!("cannot do external sort: {e:?}"));
-        }
-    };
-
-    // Materialize sorted keys into another temp file for sequential reading
-    let sorted_tfile = tempfile::NamedTempFile::new_in(tmp_dir)?;
-    let mut sorted_line_wtr =
-        io::BufWriter::with_capacity(RW_BUFFER_CAPACITY, sorted_tfile.as_file());
-
-    for item in sorted.map(Result::unwrap) {
-        sorted_line_wtr.write_all(format!("{item}\n").as_bytes())?;
-    }
-    sorted_line_wtr.flush()?;
-
-    // Drop the unsorted temp file
-    drop(line_wtr);
-    linewtr_tfile.close()?;
-
-    // Now write the final sorted CSV to `output_path`
-    let out_str = output_path.to_string_lossy().to_string();
-    let mut sorted_csv_wtr = Config::new(Some(&out_str)).writer()?;
-
-    let position_delta: u64 = if no_headers {
-        1
-    } else {
-        // Write the header row if --no-headers is false
-        let byte_headers = headers;
-        sorted_csv_wtr.write_byte_record(&byte_headers)?;
-        2
-    };
-
-    // amortize allocations
-    let mut record_wrk = csv::ByteRecord::new();
-    let mut line = String::new();
-
-    let sorted_lines = std::fs::File::open(sorted_tfile.path())?;
-    let sorted_line_rdr = io::BufReader::with_capacity(RW_BUFFER_CAPACITY, sorted_lines);
-    for l in sorted_line_rdr.lines() {
-        line.clone_from(&l?);
-        let Ok(position) = atoi_simd::parse::<u64>(&line.as_bytes()[line.len() - width..]) else {
-            return Err(anyhow!("Failed to retrieve position: invalid integer"));
-        };
-
-        idxfile
-            .seek(position.saturating_sub(position_delta))
-            .map_err(|e| anyhow!("Failed to seek to position {position}: {e}"))?;
-
-        idxfile.read_byte_record(&mut record_wrk)?;
-        sorted_csv_wtr.write_byte_record(&record_wrk)?;
-    }
-    sorted_csv_wtr.flush()?;
-
-    // Cleanup
-    drop(sorted_line_wtr);
-    sorted_tfile.close()?;
-
-    Ok(())
 }
 
 /// External sort that returns a sorted vector of 0-based row indices (data rows only),
@@ -229,6 +106,7 @@ pub fn external_sort_row_indices_by_columns(
     // same ext-sort setup as CSV variant
     let mem_limited_buffer_bytes = calculate_memory_limit(memory_limit);
     tracing::info!("{mem_limited_buffer_bytes} bytes used for in memory mergesort buffer...");
+    let threads = jobs.unwrap_or_else(|| num_cpus::get().max(1));
     let sorter: ExternalSorter<String, io::Error, LimitedBufferBuilder> =
         match ExternalSorterBuilder::new()
             .with_tmp_dir(Path::new(tmp_dir))
@@ -237,7 +115,7 @@ pub fn external_sort_row_indices_by_columns(
                 true,
             ))
             .with_rw_buf_size(RW_BUFFER_CAPACITY)
-            .with_threads_number(util::njobs(jobs))
+            .with_threads_number(threads)
             .build()
         {
             Ok(sorter) => sorter,
@@ -276,14 +154,17 @@ pub fn external_sort_row_indices_by_columns(
     for row in input_rdr.byte_records() {
         curr_row.clone_from(&row?);
         sort_key.clear();
-        for &ci in &cols {
+        for (j, &ci) in cols.iter().enumerate() {
+            if j > 0 {
+                sort_key.push(SORT_COL_SEP);
+            }
             let field = curr_row.get(ci).unwrap_or(b"");
             if let Ok(s_utf8) = simdutf8::basic::from_utf8(field) {
-                sort_key.push_str(s_utf8);
+                append_excel_like_key(&mut sort_key, s_utf8);
             } else {
                 utf8_string.clear();
                 utf8_string.push_str(&String::from_utf8_lossy(field));
-                sort_key.push_str(&utf8_string);
+                append_excel_like_key(&mut sort_key, &utf8_string);
             }
         }
         let idx_position = curr_row.position().unwrap();
