@@ -12,7 +12,7 @@ use eframe::egui::{
     ScrollArea, TextEdit, Ui,
 };
 use egui_extras::{Column, TableBuilder};
-use epaint::{Color32, CornerRadius, Margin, Stroke};
+use epaint::{Color32, CornerRadius, Margin, Shape, Stroke};
 use qsv::config::Config;
 use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
@@ -215,28 +215,20 @@ impl DataTableArea {
                                                 .and_then(|fp| fp.filters.get(ci))
                                                 .map(|f| !f.selected.is_empty())
                                                 .unwrap_or(false);
-                                            let btn_text = RichText::new("Filter").size(12.0).color(if active {
-                                                Color32::from_rgb(0, 200, 120)
-                                            } else {
-                                                Color32::from_gray(230)
-                                            });
+                                            let btn_resp = Self::filter_icon_button(ui, active).on_hover_text("Filter");
                                             let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
-                                            let btn_resp = ui.add_sized(
-                                                egui::vec2(66.0, 18.0),
-                                                Button::new(btn_text)
-                                            );
                                             if btn_resp.clicked() {
                                                 Popup::toggle_id(ui.ctx(), popup_id);
                                             }
 
                                             // Sort buttons (vector triangles so we don't depend on font glyphs)
                                             let is_active_sort = self.sort_col == Some(ci);
-                                            let desc_resp = util::sort_triangle_button(ui, false, is_active_sort && self.sort_desc)
+                                            let desc_resp = Self::sort_triangle_button(ui, false, is_active_sort && self.sort_desc)
                                                 .on_hover_text("Sort descending");
                                             if desc_resp.clicked() {
                                                 self.on_sort_click(ci, true);
                                             }
-                                            let asc_resp = util::sort_triangle_button(ui, true, is_active_sort && !self.sort_desc)
+                                            let asc_resp = Self::sort_triangle_button(ui, true, is_active_sort && !self.sort_desc)
                                                 .on_hover_text("Sort ascending");
                                             if asc_resp.clicked() {
                                                 self.on_sort_click(ci, false);
@@ -1728,6 +1720,77 @@ impl DataTableArea {
             fp.filtered_indices = Some(out);
             fp.page = 0;
         }
+    }
+
+    // Draw a small up/down triangle as a clickable icon button (font-independent).
+    fn sort_triangle_button(ui: &mut Ui, up: bool, active: bool) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+        let r = rect.shrink2(egui::vec2(3.0, 3.0));
+        let (p1, p2, p3) = if up {
+            (
+                egui::pos2(r.center().x, r.top()),
+                egui::pos2(r.left(), r.bottom()),
+                egui::pos2(r.right(), r.bottom()),
+            )
+        } else {
+            (
+                egui::pos2(r.left(), r.top()),
+                egui::pos2(r.right(), r.top()),
+                egui::pos2(r.center().x, r.bottom()),
+            )
+        };
+        let fill = if active {
+            Color32::from_rgb(0, 200, 120)
+        } else if response.hovered() {
+            Color32::from_gray(210)
+        } else {
+            Color32::from_gray(170)
+        };
+        let stroke = Stroke::new(1.0, Color32::from_gray(60));
+        ui.painter()
+            .add(Shape::convex_polygon(vec![p1, p2, p3], fill, stroke));
+        response
+    }
+
+    // Draw a compact funnel (filter) icon as a clickable button.
+    fn filter_icon_button(ui: &mut Ui, active: bool) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(18.0, 16.0), egui::Sense::click());
+        let r = rect.shrink2(egui::vec2(3.0, 2.0));
+
+        let fill = if active {
+            Color32::from_rgb(0, 200, 120)
+        } else if response.hovered() {
+            Color32::from_gray(210)
+        } else {
+            Color32::from_gray(170)
+        };
+        let stroke = Stroke::new(1.0, Color32::from_gray(60));
+
+        // Top trapezoid
+        let top_h = (r.height() * 0.55).clamp(6.0, 9.0);
+        let stem_w = (r.width() * 0.18).clamp(2.0, 3.0);
+        let mid_y = r.top() + top_h;
+        let cx = r.center().x;
+        let trapezoid = vec![
+            egui::pos2(r.left(), r.top()),
+            egui::pos2(r.right(), r.top()),
+            egui::pos2(cx + stem_w, mid_y),
+            egui::pos2(cx - stem_w, mid_y),
+        ];
+        ui.painter()
+            .add(Shape::convex_polygon(trapezoid, fill, stroke));
+
+        // Stem rectangle
+        let stem_h = (r.height() - top_h - 1.0).max(3.0);
+        let stem = vec![
+            egui::pos2(cx - stem_w, mid_y),
+            egui::pos2(cx + stem_w, mid_y),
+            egui::pos2(cx + stem_w, mid_y + stem_h),
+            egui::pos2(cx - stem_w, mid_y + stem_h),
+        ];
+        ui.painter().add(Shape::convex_polygon(stem, fill, stroke));
+
+        response
     }
 
     fn on_sort_click(&mut self, col: usize, descending: bool) {
