@@ -1,8 +1,8 @@
 use std::io::{Read, Seek};
 
-use crate::err::Result;
-use crate::utils;
 use serde::ser;
+
+use crate::{err::Result, utils};
 
 /// $Data Attribute
 #[derive(Clone, Debug)]

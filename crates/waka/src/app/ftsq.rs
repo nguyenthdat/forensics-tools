@@ -1,16 +1,16 @@
 use eframe::egui;
 
 pub struct FtsEditor {
-    query: String,
-    result: String,
+    query:       String,
+    result:      String,
     show_result: bool,
 }
 
 impl FtsEditor {
     pub fn new() -> Self {
         Self {
-            query: String::new(),
-            result: String::new(),
+            query:       String::new(),
+            result:      String::new(),
             show_result: false,
         }
     }

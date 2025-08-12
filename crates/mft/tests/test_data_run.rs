@@ -1,9 +1,13 @@
 mod fixtures;
 
 use fixtures::*;
-use mft::attribute::data_run::{DataRun, RunType, decode_data_runs};
-use mft::attribute::{MftAttribute, MftAttributeType};
-use mft::mft::MftParser;
+use mft::{
+    attribute::{
+        MftAttribute, MftAttributeType,
+        data_run::{DataRun, RunType, decode_data_runs},
+    },
+    mft::MftParser,
+};
 
 #[test]
 fn test_runs() {
@@ -13,7 +17,7 @@ fn test_runs() {
         Some(vec![DataRun {
             lcn_length: 0x18,
             lcn_offset: 0x5634,
-            run_type: RunType::Standard
+            run_type:   RunType::Standard,
         }])
     );
 
@@ -24,17 +28,17 @@ fn test_runs() {
             DataRun {
                 lcn_length: 0x30,
                 lcn_offset: 0x20,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 0x60,
                 lcn_offset: 0,
-                run_type: RunType::Sparse
+                run_type:   RunType::Sparse,
             },
             DataRun {
                 lcn_length: 0x10,
                 lcn_offset: 0x30,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
         ])
     );
@@ -48,17 +52,17 @@ fn test_runs() {
             DataRun {
                 lcn_length: 0x38,
                 lcn_offset: 0x342573,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 0x114,
                 lcn_offset: 0x363758,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 0x42,
                 lcn_offset: 0x393802,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
         ])
     );
@@ -91,267 +95,267 @@ fn test_runs() {
             DataRun {
                 lcn_length: 517248,
                 lcn_offset: 0,
-                run_type: RunType::Sparse
+                run_type:   RunType::Sparse,
             },
             DataRun {
                 lcn_length: 71,
                 lcn_offset: 3961442,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 73,
                 lcn_offset: 4132643,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 160,
                 lcn_offset: 3772347,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 160,
                 lcn_offset: 4226207,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 64,
                 lcn_offset: 4067241,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 160,
                 lcn_offset: 4334026,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 235,
                 lcn_offset: 3553349,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 317,
                 lcn_offset: 4391836,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 56,
                 lcn_offset: 4366516,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 328,
                 lcn_offset: 4579760,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 56,
                 lcn_offset: 4580100,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 310,
                 lcn_offset: 5318986,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 104,
                 lcn_offset: 4062936,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 112,
                 lcn_offset: 4579632,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 114,
                 lcn_offset: 4067305,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 4597024,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 129,
                 lcn_offset: 4067112,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 129,
                 lcn_offset: 4137722,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 138,
                 lcn_offset: 4153805,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 116,
                 lcn_offset: 4423680,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 152,
                 lcn_offset: 5082620,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 104,
                 lcn_offset: 4157627,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 4029324,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 5475097,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 4218577,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 4348474,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 728,
                 lcn_offset: 4783296,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 66,
                 lcn_offset: 4347766,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 243,
                 lcn_offset: 3823377,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 115,
                 lcn_offset: 3816716,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 5055469,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 256,
                 lcn_offset: 3743792,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 256,
                 lcn_offset: 3743536,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 192,
                 lcn_offset: 5294294,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 67,
                 lcn_offset: 5289317,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 256,
                 lcn_offset: 3548654,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 256,
                 lcn_offset: 5305840,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 4157499,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 125,
                 lcn_offset: 4156869,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 4157811,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 4132344,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 5458328,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 228,
                 lcn_offset: 5278358,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 36,
                 lcn_offset: 4436212,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 193,
                 lcn_offset: 4436249,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 55,
                 lcn_offset: 5277228,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 5277299,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 5277443,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 134,
                 lcn_offset: 3785886,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 128,
                 lcn_offset: 5339176,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 250,
                 lcn_offset: 4133745,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
             DataRun {
                 lcn_length: 256,
                 lcn_offset: 5338664,
-                run_type: RunType::Standard
+                run_type:   RunType::Standard,
             },
         ])
     );

@@ -1,29 +1,31 @@
 use std::io::{Read, Seek};
 
-use crate::attribute::FileAttributeFlags;
-use crate::err::{Error, Result};
-
 use byteorder::{LittleEndian, ReadBytesExt};
 use chrono::{DateTime, Utc};
 use log::trace;
 use serde::Serialize;
 use winstructs::timestamp::WinTimestamp;
 
+use crate::{
+    attribute::FileAttributeFlags,
+    err::{Error, Result},
+};
+
 #[derive(Serialize, Debug, Clone)]
 pub struct StandardInfoAttr {
-    pub created: DateTime<Utc>,
-    pub modified: DateTime<Utc>,
+    pub created:      DateTime<Utc>,
+    pub modified:     DateTime<Utc>,
     pub mft_modified: DateTime<Utc>,
-    pub accessed: DateTime<Utc>,
+    pub accessed:     DateTime<Utc>,
     /// DOS File Permissions
-    pub file_flags: FileAttributeFlags,
-    pub max_version: u32,
-    pub version: u32,
-    pub class_id: u32,
-    pub owner_id: u32,
-    pub security_id: u32,
-    pub quota: u64,
-    pub usn: u64,
+    pub file_flags:   FileAttributeFlags,
+    pub max_version:  u32,
+    pub version:      u32,
+    pub class_id:     u32,
+    pub owner_id:     u32,
+    pub security_id:  u32,
+    pub quota:        u64,
+    pub usn:          u64,
 }
 
 impl StandardInfoAttr {

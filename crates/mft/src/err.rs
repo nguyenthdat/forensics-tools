@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+
 use thiserror::Error;
 
 pub type Result<T> = ::std::result::Result<T, Error>;
@@ -12,7 +13,7 @@ pub enum Error {
     },
     #[error("Failed to open file {}", path.display())]
     FailedToOpenFile {
-        path: PathBuf,
+        path:   PathBuf,
         source: std::io::Error,
     },
     #[error("Error while decoding name in filename attribute")]
@@ -37,9 +38,9 @@ pub enum Error {
         fixup_bytes
     )]
     FailedToApplyFixup {
-        stride_number: usize,
+        stride_number:       usize,
         end_of_sector_bytes: Vec<u8>,
-        fixup_bytes: Vec<u8>,
+        fixup_bytes:         Vec<u8>,
     },
     #[error("Failed to read MftReference")]
     FailedToReadMftReference { source: winstructs::err::Error },

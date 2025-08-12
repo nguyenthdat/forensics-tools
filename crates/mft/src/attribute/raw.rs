@@ -1,16 +1,15 @@
 use std::io::{Read, Seek};
 
-use crate::attribute::MftAttributeType;
-use crate::err::Result;
-use crate::utils;
 use serde::{Serialize, ser};
+
+use crate::{attribute::MftAttributeType, err::Result, utils};
 
 /// Placeholder attribute for currently unparsed attributes.
 #[derive(Serialize, Clone, Debug)]
 pub struct RawAttribute {
     pub attribute_type: MftAttributeType,
     #[serde(serialize_with = "data_as_hex")]
-    pub data: Vec<u8>,
+    pub data:           Vec<u8>,
 }
 
 impl RawAttribute {

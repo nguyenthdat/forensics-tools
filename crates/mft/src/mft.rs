@@ -1,21 +1,25 @@
-use crate::entry::MftEntry;
-use crate::err::{Error, Result};
+use std::{
+    fs::{self, File},
+    io::{BufReader, Cursor, Read, Seek, SeekFrom},
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+};
 
-use crate::EntryHeader;
 use log::{debug, trace};
-
 use lru::LruCache;
-use std::fs::{self, File};
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
-use std::num::NonZeroUsize;
-use std::path::{Path, PathBuf};
+
+use crate::{
+    EntryHeader,
+    entry::MftEntry,
+    err::{Error, Result},
+};
 
 pub struct MftParser<T: Read + Seek> {
-    data: T,
+    data:          T,
     /// Entry size is present in the volume header, but this is not available to us.
     /// Instead this will be guessed by the entry size of the first entry.
-    entry_size: u32,
-    size: u64,
+    entry_size:    u32,
+    size:          u64,
     entries_cache: LruCache<u64, PathBuf>,
 }
 
@@ -151,7 +155,7 @@ impl<T: Read + Seek> MftParser<T> {
 
                     Ok(Some(orphan))
                 }
-            }
+            },
             None => match entry.header.base_reference.entry {
                 // I don't have a parent reference, and no X30 attribute. Though luck.
                 0 => Ok(None),
@@ -163,8 +167,7 @@ impl<T: Read + Seek> MftParser<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tests::fixtures::mft_sample;
-    use crate::{MftEntry, MftParser};
+    use crate::{MftEntry, MftParser, tests::fixtures::mft_sample};
 
     // entrypoint for clion profiler.
     #[test]

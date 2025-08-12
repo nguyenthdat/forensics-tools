@@ -1,7 +1,5 @@
 #![allow(dead_code)]
-use std::path::PathBuf;
-
-use std::sync::Once;
+use std::{path::PathBuf, sync::Once};
 
 static LOGGER_INIT: Once = Once::new();
 

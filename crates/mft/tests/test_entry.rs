@@ -1,14 +1,17 @@
 mod fixtures;
 
 use fixtures::*;
-use mft::attribute::x30::{FileNameAttr, FileNamespace};
-use mft::attribute::x90::{IndexCollationRules, IndexEntryFlags, IndexEntryHeader};
-use mft::attribute::{FileAttributeFlags, MftAttribute, MftAttributeType};
-use mft::entry::MftEntry;
-use mft::mft::MftParser;
+use mft::{
+    attribute::{
+        FileAttributeFlags, MftAttribute, MftAttributeType,
+        x30::{FileNameAttr, FileNamespace},
+        x90::{IndexCollationRules, IndexEntryFlags, IndexEntryHeader},
+    },
+    entry::MftEntry,
+    mft::MftParser,
+};
 use serde_json;
-use winstructs::ntfs::mft_reference::MftReference;
-use winstructs::timestamp::WinTimestamp;
+use winstructs::{ntfs::mft_reference::MftReference, timestamp::WinTimestamp};
 
 #[test]
 fn test_entry_invalid_fixup_value() {
@@ -53,29 +56,29 @@ fn test_entry_index_root() {
                         .to_datetime();
 
                 let index_entry_comp = IndexEntryHeader {
-                    mft_reference: MftReference {
-                        entry: 26399,
+                    mft_reference:       MftReference {
+                        entry:    26399,
                         sequence: 1,
                     },
                     index_record_length: 136,
-                    attr_fname_length: 110,
-                    flags: IndexEntryFlags::INDEX_ENTRY_NODE,
-                    fname_info: FileNameAttr {
-                        parent: MftReference {
-                            entry: 26359,
+                    attr_fname_length:   110,
+                    flags:               IndexEntryFlags::INDEX_ENTRY_NODE,
+                    fname_info:          FileNameAttr {
+                        parent:        MftReference {
+                            entry:    26359,
                             sequence: 1,
                         },
-                        created: created,
-                        modified: created,
-                        mft_modified: mft_modified,
-                        accessed: mft_modified,
-                        logical_size: 4096,
+                        created:       created,
+                        modified:      created,
+                        mft_modified:  mft_modified,
+                        accessed:      mft_modified,
+                        logical_size:  4096,
                         physical_size: 1484,
-                        flags: FileAttributeFlags::FILE_ATTRIBUTE_ARCHIVE,
+                        flags:         FileAttributeFlags::FILE_ATTRIBUTE_ARCHIVE,
                         reparse_value: 0,
-                        name_length: 22,
-                        namespace: FileNamespace::Win32,
-                        name: "test_returnfuncptrs.py".to_string(),
+                        name_length:   22,
+                        namespace:     FileNamespace::Win32,
+                        name:          "test_returnfuncptrs.py".to_string(),
                     },
                 };
                 let last_index_entry = &index_entries[3];

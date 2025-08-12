@@ -1,5 +1,7 @@
-use std::collections::{BTreeSet, HashSet};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{BTreeSet, HashSet},
+    path::{Path, PathBuf},
+};
 
 use anyhow::anyhow;
 use bon::Builder;
@@ -33,36 +35,36 @@ pub enum ExportFormat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnFilter {
-    pub enabled: bool,
-    pub include: bool, // include selected values when true; else exclude them
+    pub enabled:          bool,
+    pub include:          bool, // include selected values when true; else exclude them
     pub case_insensitive: bool, // Aa toggle
-    pub selected: Vec<Ustr>, // chosen values in this column
+    pub selected:         Vec<Ustr>, // chosen values in this column
     #[serde(skip)]
-    pub distinct_cache: Option<Vec<Ustr>>, // lazily populated (sampled)
+    pub distinct_cache:   Option<Vec<Ustr>>, // lazily populated (sampled)
     #[serde(skip)]
-    pub search: Ustr, // search within the dropdown
+    pub search:           Ustr, // search within the dropdown
     // Regex filtering
-    pub use_regex: bool,  // enable regex filter
-    pub regex_text: Ustr, // pattern text (persisted)
+    pub use_regex:        bool, // enable regex filter
+    pub regex_text:       Ustr, // pattern text (persisted)
     #[serde(skip)]
-    pub regex_error: Option<Ustr>, // last regex compile error (ui only)
+    pub regex_error:      Option<Ustr>, // last regex compile error (ui only)
     #[serde(skip)]
-    pub compiled_regex: Option<Regex>, // cached compiled regex (ui/runtime only)
+    pub compiled_regex:   Option<Regex>, // cached compiled regex (ui/runtime only)
 }
 
 impl Default for ColumnFilter {
     fn default() -> Self {
         Self {
-            enabled: true,
-            include: true,
+            enabled:          true,
+            include:          true,
             case_insensitive: false,
-            selected: Vec::new(),
-            distinct_cache: None,
-            search: ustr(""),
-            use_regex: false,
-            regex_text: ustr(""),
-            regex_error: None,
-            compiled_regex: None,
+            selected:         Vec::new(),
+            distinct_cache:   None,
+            search:           ustr(""),
+            use_regex:        false,
+            regex_text:       ustr(""),
+            regex_error:      None,
+            compiled_regex:   None,
         }
     }
 }
@@ -76,11 +78,11 @@ impl ColumnFilter {
                 Ok(rx) => {
                     self.regex_error = None;
                     self.compiled_regex = Some(rx);
-                }
+                },
                 Err(e) => {
                     self.regex_error = Some(ustr(&e.to_string()));
                     self.compiled_regex = None;
-                }
+                },
             }
         } else {
             // When regex is disabled or pattern is empty, clear cache and error
@@ -92,44 +94,44 @@ impl ColumnFilter {
 
 #[derive(Debug, Clone, Builder)]
 pub struct FilePreview {
-    pub file_path: Ustr,
-    pub headers: Vec<Ustr>,
-    pub preview_rows: Vec<Vec<Ustr>>,
-    pub filters: Vec<ColumnFilter>,
-    pub page: usize, // 0-based, per-file current page
-    pub total_rows: Option<u64>,
-    pub load_error: Option<Ustr>,
+    pub file_path:        Ustr,
+    pub headers:          Vec<Ustr>,
+    pub preview_rows:     Vec<Vec<Ustr>>,
+    pub filters:          Vec<ColumnFilter>,
+    pub page:             usize, // 0-based, per-file current page
+    pub total_rows:       Option<u64>,
+    pub load_error:       Option<Ustr>,
     pub filtered_indices: Option<Vec<u64>>,
-    pub sorted_indices: Option<Vec<u64>>,
-    pub sort_col: Option<usize>,
-    pub sort_desc: bool,
+    pub sorted_indices:   Option<Vec<u64>>,
+    pub sort_col:         Option<usize>,
+    pub sort_desc:        bool,
 }
 
 #[derive(Debug, Clone, Builder)]
 pub struct DataTableArea {
-    pub files: Vec<FilePreview>,
-    pub current_file: usize,
-    pub toal_rows: usize, // kept for backward-compat
-    pub rows_per_page: usize,
-    pub page: usize, // 0-based
-    pub export_format: ExportFormat,
+    pub files:                Vec<FilePreview>,
+    pub current_file:         usize,
+    pub toal_rows:            usize, // kept for backward-compat
+    pub rows_per_page:        usize,
+    pub page:                 usize, // 0-based
+    pub export_format:        ExportFormat,
     pub export_only_filtered: bool,
-    pub export_status: Option<Ustr>,
-    pub pending_reload: bool,
+    pub export_status:        Option<Ustr>,
+    pub pending_reload:       bool,
 }
 
 impl Default for DataTableArea {
     fn default() -> Self {
         Self {
-            files: Vec::new(),
-            current_file: 0,
-            toal_rows: 0,
-            rows_per_page: 50,
-            page: 0,
-            export_format: ExportFormat::Csv,
+            files:                Vec::new(),
+            current_file:         0,
+            toal_rows:            0,
+            rows_per_page:        50,
+            page:                 0,
+            export_format:        ExportFormat::Csv,
             export_only_filtered: true,
-            export_status: None,
-            pending_reload: false,
+            export_status:        None,
+            pending_reload:       false,
         }
     }
 }
@@ -445,16 +447,16 @@ impl DataTableArea {
                     }
                     composed = Some(v);
                     eff_slice = composed.as_deref();
-                }
+                },
                 (Some(sort), None) => {
                     eff_slice = Some(sort.as_slice());
-                }
+                },
                 (None, Some(filt)) => {
                     eff_slice = Some(filt.as_slice());
-                }
+                },
                 (None, None) => {
                     eff_slice = None;
-                }
+                },
             }
 
             if let Some(slice_all) = eff_slice {
@@ -493,11 +495,11 @@ impl DataTableArea {
                                 let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
                                 row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
                                 fp.preview_rows.push(row);
-                            }
+                            },
                             Err(e) => {
                                 fp.load_error = Some(ustr(&format!("Row read error: {e}")));
                                 break;
-                            }
+                            },
                         }
                     }
                     i += len;
@@ -514,11 +516,11 @@ impl DataTableArea {
                                 let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
                                 row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
                                 fp.preview_rows.push(row);
-                            }
+                            },
                             Err(e) => {
                                 fp.load_error = Some(ustr(&format!("Row read error: {e}")));
                                 break;
-                            }
+                            },
                         }
                     }
                 }
@@ -568,16 +570,16 @@ impl DataTableArea {
                             }
                             composed = Some(v);
                             eff_slice = composed.as_deref();
-                        }
+                        },
                         (Some(sort), None) => {
                             eff_slice = Some(sort.as_slice());
-                        }
+                        },
                         (None, Some(filt)) => {
                             eff_slice = Some(filt.as_slice());
-                        }
+                        },
                         (None, None) => {
                             eff_slice = None;
-                        }
+                        },
                     }
 
                     if let Some(slice_all) = eff_slice {
@@ -612,13 +614,13 @@ impl DataTableArea {
                                     if next.is_none() {
                                         break;
                                     }
-                                }
+                                },
                                 Some(want) if (ri as u64) < want => continue,
                                 _ => {
                                     if next.is_none() {
                                         break;
                                     }
-                                }
+                                },
                             }
                         }
                     } else {
@@ -631,18 +633,18 @@ impl DataTableArea {
                                         Vec::with_capacity(fp.headers.len().max(rec.len()));
                                     row.extend(rec.iter().map(ustr));
                                     fp.preview_rows.push(row);
-                                }
+                                },
                                 Err(e) => {
                                     fp.load_error = Some(ustr(&format!("Row read error: {e}")));
                                     break;
-                                }
+                                },
                             }
                         }
                     }
-                }
+                },
                 Err(e) => {
                     fp.load_error = Some(ustr(&format!("Unable to open file: {e}")));
-                }
+                },
             }
         }
 
@@ -728,11 +730,11 @@ impl DataTableArea {
                                 let mut row = Vec::with_capacity(fp.headers.len().max(rec.len()));
                                 row.extend(rec.iter().map(ustr));
                                 fp.preview_rows.push(row);
-                            }
+                            },
                             Err(e) => {
                                 fp.load_error = Some(ustr(&format!("Row read error: {e}")));
                                 break;
-                            }
+                            },
                         }
                     }
 
@@ -740,10 +742,10 @@ impl DataTableArea {
                         fp.load_error = Some(ustr("No data rows found."));
                     }
                 }
-            }
+            },
             Err(e) => {
                 fp.load_error = Some(ustr(&format!("Unable to open file: {e}")));
-            }
+            },
         }
 
         self.files.push(fp);
@@ -795,7 +797,8 @@ impl DataTableArea {
                                     })
                                     .inner_margin(Margin::symmetric(8, 4))
                                     .show(ui, |ui| {
-                                        // Return the close button's rect so we can avoid treating its clicks as tab clicks
+                                        // Return the close button's rect so we can avoid treating
+                                        // its clicks as tab clicks
                                         let mut close_rect = egui::Rect::NAN;
                                         ui.horizontal(|ui| {
                                             // filename label (smaller font, narrow height)
@@ -828,14 +831,16 @@ impl DataTableArea {
                                         close_rect
                                     });
 
-                                // Make the whole tab clickable, but ignore clicks on the close button area
+                                // Make the whole tab clickable, but ignore clicks on the close
+                                // button area
                                 let tab_hit = ui.interact(
                                     ir.response.rect,
                                     ui.id().with(("tab", idx)),
                                     egui::Sense::click(),
                                 );
                                 if tab_hit.clicked() {
-                                    // If the click occurred over the close button, treat it as a close, not a select.
+                                    // If the click occurred over the close button, treat it as a
+                                    // close, not a select.
                                     let click_pos = tab_hit
                                         .interact_pointer_pos()
                                         .or_else(|| ui.input(|i| i.pointer.interact_pos()))
@@ -914,7 +919,8 @@ impl DataTableArea {
         let path_str = fp.file_path.to_string();
         let cfg = Config::new(Some(&path_str));
 
-        // If we have filtered indices and only_filtered is true, restrict to them; else stream all rows.
+        // If we have filtered indices and only_filtered is true, restrict to them; else stream all
+        // rows.
         if only_filtered && let Some(ref filt) = fp.filtered_indices {
             // Fast-path using the qsv index when available
             if let Ok(Some(mut idx)) = cfg.indexed() {
@@ -955,13 +961,13 @@ impl DataTableArea {
                             if next.is_none() {
                                 break;
                             }
-                        }
+                        },
                         Some(want) if (ri as u64) < want => continue,
                         _ => {
                             if next.is_none() {
                                 break;
                             }
-                        }
+                        },
                     }
                 }
                 wtr.flush().map_err(|e| anyhow!("Flush failed: {e}"))?;
@@ -1047,7 +1053,8 @@ impl DataTableArea {
             Ok(())
         };
 
-        // If we have filtered indices and only_filtered is true, restrict to them; else stream all rows.
+        // If we have filtered indices and only_filtered is true, restrict to them; else stream all
+        // rows.
         if only_filtered && let Some(ref filt) = fp.filtered_indices {
             if let Ok(Some(mut idx)) = cfg.indexed() {
                 // iterate contiguous chunks (mirrors paging logic)
@@ -1098,13 +1105,13 @@ impl DataTableArea {
                             if next.is_none() {
                                 break;
                             }
-                        }
+                        },
                         Some(want) if (ri as u64) < want => continue,
                         _ => {
                             if next.is_none() {
                                 break;
                             }
-                        }
+                        },
                     }
                 }
                 write!(&mut out, "]")?;
@@ -1248,7 +1255,7 @@ impl DataTableArea {
                                 } else {
                                     Ok(())
                                 }
-                            }
+                            },
                             ExportFormat::Xlsx => {
                                 if let Some(path) = FileDialog::new()
                                     .add_filter("Excel Workbook", &["xlsx"])
@@ -1262,7 +1269,7 @@ impl DataTableArea {
                                 } else {
                                     Ok(())
                                 }
-                            }
+                            },
                             ExportFormat::Ods => {
                                 if let Some(path) = FileDialog::new()
                                     .add_filter("OpenDocument Spreadsheet", &["ods"])
@@ -1276,7 +1283,7 @@ impl DataTableArea {
                                 } else {
                                     Ok(())
                                 }
-                            }
+                            },
                             ExportFormat::Parquet => {
                                 if let Some(dir) = FileDialog::new().pick_folder() {
                                     self.export_current_to_parquet_dir(
@@ -1286,7 +1293,7 @@ impl DataTableArea {
                                 } else {
                                     Ok(())
                                 }
-                            }
+                            },
                             ExportFormat::Json => {
                                 if let Some(path) = FileDialog::new()
                                     .add_filter("JSON", &["json"])
@@ -1300,7 +1307,7 @@ impl DataTableArea {
                                 } else {
                                     Ok(())
                                 }
-                            }
+                            },
                         };
 
                         self.export_status = Some(ustr(&match result {
@@ -1323,7 +1330,7 @@ impl DataTableArea {
                     let filtered = fp.filtered_indices.as_ref().map(|v| v.len());
                     let base_total = fp.total_rows.unwrap_or(self.toal_rows as u64) as usize;
                     (fp.page, filtered.unwrap_or(base_total))
-                }
+                },
                 None => return,
             };
             let rows_per_page = self.rows_per_page;
@@ -1473,8 +1480,8 @@ impl DataTableArea {
         // We'll prepare two variants: one optimized for byte records (index),
         // and one for string records (reader).
         struct ActiveBytes {
-            col: usize,
-            set: Option<HashSet<Vec<u8>>>, // normalized per case-insensitive flag
+            col:   usize,
+            set:   Option<HashSet<Vec<u8>>>, // normalized per case-insensitive flag
             casei: bool,
             regex: Option<Regex>,
         }
@@ -1573,7 +1580,7 @@ impl DataTableArea {
 
         // Fallback: stream with CSV reader (string records).
         // Keep the existing normalization logic for correctness (Unicode-aware via util::norm).
-        let mut active: Vec<(usize, HashSet<String>, bool /*casei*/, Option<Regex>)> = Vec::new();
+        let mut active: Vec<(usize, HashSet<String>, bool /* casei */, Option<Regex>)> = Vec::new();
         for (i, f) in fp.filters.iter().enumerate() {
             if f.selected.is_empty() && !f.use_regex {
                 continue;
@@ -1644,10 +1651,10 @@ impl DataTableArea {
                     fp.sort_desc = descending;
                 }
                 self.export_status = Some(ustr("✅ Sorted"));
-            }
+            },
             Err(e) => {
                 self.export_status = Some(ustr(&format!("⚠ Sort failed: {e}")));
-            }
+            },
         }
         // Force preview reload after sort
         self.reload_current_preview_page();

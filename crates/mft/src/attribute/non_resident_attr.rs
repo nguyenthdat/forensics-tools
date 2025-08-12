@@ -1,9 +1,14 @@
-use crate::attribute::data_run::{DataRun, decode_data_runs};
-use crate::attribute::header::{MftAttributeHeader, NonResidentHeader};
-use crate::err::{Error, Result};
+use std::io::{Read, Seek, SeekFrom};
 
 use serde::Serialize;
-use std::io::{Read, Seek, SeekFrom};
+
+use crate::{
+    attribute::{
+        data_run::{DataRun, decode_data_runs},
+        header::{MftAttributeHeader, NonResidentHeader},
+    },
+    err::{Error, Result},
+};
 
 #[derive(Serialize, Clone, Debug)]
 pub struct NonResidentAttr {

@@ -5,12 +5,10 @@
 #[macro_use]
 extern crate num_derive;
 
-pub use attribute::MftAttribute;
-pub use attribute::x10::StandardInfoAttr;
-pub use attribute::x30::FileNameAttr;
+pub use attribute::{MftAttribute, x10::StandardInfoAttr, x30::FileNameAttr};
+pub use entry::{EntryHeader, MftEntry};
 
 pub use crate::mft::MftParser;
-pub use entry::{EntryHeader, MftEntry};
 
 pub mod attribute;
 pub mod csv;

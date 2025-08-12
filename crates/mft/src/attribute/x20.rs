@@ -1,17 +1,14 @@
-use crate::err::{Error, Result};
+use std::io::{Read, Seek, SeekFrom};
 
 use byteorder::{LittleEndian, ReadBytesExt};
-use encoding::all::UTF_16LE;
-use encoding::{DecoderTrap, Encoding};
-
+use encoding::{DecoderTrap, Encoding, all::UTF_16LE};
 use serde::Serialize;
-
-use std::io::{Read, Seek, SeekFrom};
 use winstructs::ntfs::mft_reference::MftReference;
+
+use crate::err::{Error, Result};
 
 /// The AttributeListAttr represents the $20 attribute, which contains a list
 /// of attribute entries in child entries.
-///
 #[derive(Serialize, Clone, Debug)]
 pub struct AttributeListAttr {
     /// A list of AttributeListEntry that make up this AttributeListAttr
@@ -74,7 +71,7 @@ impl AttributeListAttr {
                 stream.rewind()?;
 
                 offset
-            }
+            },
         };
 
         let mut entries: Vec<AttributeListEntry> = Vec::new();
@@ -100,27 +97,26 @@ impl AttributeListAttr {
 
 /// An AttributeListAttr is made up off multiple AttributeListEntry structs.
 /// <https://docs.microsoft.com/en-us/windows/win32/devnotes/attribute-list-entry>
-///
 #[derive(Serialize, Clone, Debug)]
 pub struct AttributeListEntry {
     /// The attribute code
-    pub attribute_type: u32,
+    pub attribute_type:    u32,
     /// This entry length
-    pub record_length: u16,
+    pub record_length:     u16,
     /// Attribute name length (0 means no name)
-    pub name_length: u8,
+    pub name_length:       u8,
     /// Attribute name offset
-    pub name_offset: u8,
+    pub name_offset:       u8,
     /// This member is zero unless the attribute requires multiple file record
     /// segments and unless this entry is a reference to a segment other than the first one.
     /// In this case, this value is the lowest VCN that is described by the referenced segment.
-    pub lowest_vcn: u64,
+    pub lowest_vcn:        u64,
     /// The segments MFT reference
     pub segment_reference: MftReference,
     /// The attribute's id
-    pub reserved: u16,
+    pub reserved:          u16,
     /// The attribute's name
-    pub name: String,
+    pub name:              String,
 }
 impl AttributeListEntry {
     /// Create AttributeListEntry from a stream.

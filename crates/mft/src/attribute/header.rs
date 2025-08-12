@@ -1,36 +1,40 @@
-use crate::attribute::{AttributeDataFlags, MftAttributeType};
-use crate::err::{Error, Result};
-use crate::utils::read_utf16_string;
+use std::io::{Read, Seek, SeekFrom};
 
 use byteorder::{LittleEndian, ReadBytesExt};
 use num_traits::FromPrimitive;
 use serde::Serialize;
-use std::io::{Read, Seek, SeekFrom};
+
+use crate::{
+    attribute::{AttributeDataFlags, MftAttributeType},
+    err::{Error, Result},
+    utils::read_utf16_string,
+};
 
 /// Represents the union defined in
 /// <https://docs.microsoft.com/en-us/windows/desktop/devnotes/attribute-record-header>
 #[derive(Serialize, Clone, Debug)]
 pub struct MftAttributeHeader {
-    pub type_code: MftAttributeType,
+    pub type_code:          MftAttributeType,
     /// The size of the attribute record, in bytes.
-    /// This value reflects the required size for the record variant and is always rounded to the nearest quadword boundary.
-    pub record_length: u32,
+    /// This value reflects the required size for the record variant and is always rounded to the
+    /// nearest quadword boundary.
+    pub record_length:      u32,
     /// If the FormCode member is RESIDENT_FORM (0x00), the union is a Resident structure.
     /// If FormCode is NONRESIDENT_FORM (0x01), the union is a Nonresident structure.
-    pub form_code: u8,
+    pub form_code:          u8,
     pub residential_header: ResidentialHeader,
     /// The size of the optional attribute name, in characters, or 0 if there is no attribute name.
     /// The maximum attribute name length is 255 characters.
-    pub name_size: u8,
+    pub name_size:          u8,
     /// The offset of the attribute name from the start of the attribute record, in bytes.
     /// If the NameLength member is 0, this member is undefined.
-    pub name_offset: Option<u16>,
-    pub data_flags: AttributeDataFlags,
+    pub name_offset:        Option<u16>,
+    pub data_flags:         AttributeDataFlags,
     /// The unique instance for this attribute in the file record.
-    pub instance: u16,
-    pub name: String,
+    pub instance:           u16,
+    pub name:               String,
     /// start of the attribute; used for calculating relative offsets
-    pub start_offset: u64,
+    pub start_offset:       u64,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -58,7 +62,7 @@ impl MftAttributeHeader {
                 return Err(Error::UnknownAttributeType {
                     attribute_type: type_code_value,
                 });
-            }
+            },
         };
 
         let attribute_size = stream.read_u32::<LittleEndian>()?;
@@ -78,10 +82,10 @@ impl MftAttributeHeader {
             1 => ResidentialHeader::NonResident(NonResidentHeader::from_stream(stream)?),
             _ => {
                 return Err(Error::UnhandledResidentFlag {
-                    flag: resident_flag,
+                    flag:   resident_flag,
                     offset: stream.stream_position()?,
                 });
-            }
+            },
         };
 
         // Name is optional, and will not be present if size == 0.
@@ -114,21 +118,21 @@ impl MftAttributeHeader {
 pub struct ResidentHeader {
     #[serde(skip_serializing)]
     /// The size of the attribute value, in bytes.
-    pub data_size: u32,
+    pub data_size:   u32,
     #[serde(skip_serializing)]
     /// The offset to the value from the start of the attribute record, in bytes.
     pub data_offset: u16,
-    pub index_flag: u8,
-    pub padding: u8,
+    pub index_flag:  u8,
+    pub padding:     u8,
 }
 
 impl ResidentHeader {
     pub fn from_stream<R: Read>(reader: &mut R) -> Result<ResidentHeader> {
         Ok(ResidentHeader {
-            data_size: reader.read_u32::<LittleEndian>()?,
+            data_size:   reader.read_u32::<LittleEndian>()?,
             data_offset: reader.read_u16::<LittleEndian>()?,
-            index_flag: reader.read_u8()?,
-            padding: reader.read_u8()?,
+            index_flag:  reader.read_u8()?,
+            padding:     reader.read_u8()?,
         })
     }
 }
@@ -136,26 +140,27 @@ impl ResidentHeader {
 #[derive(Serialize, Clone, Debug)]
 pub struct NonResidentHeader {
     /// The lowest virtual cluster number (VCN) covered by this attribute record.
-    pub vnc_first: u64,
+    pub vnc_first:             u64,
     /// The highest VCN covered by this attribute record.
-    pub vnc_last: u64,
+    pub vnc_last:              u64,
     #[serde(skip_serializing)]
-    /// The offset to the mapping pairs array from the start of the attribute record, in bytes. For more information, see Remarks.
-    pub datarun_offset: u16,
+    /// The offset to the mapping pairs array from the start of the attribute record, in bytes. For
+    /// more information, see Remarks.
+    pub datarun_offset:        u16,
     /// Reserved UCHAR\[6]
     pub unit_compression_size: u16,
     #[serde(skip_serializing)]
-    pub padding: u32,
+    pub padding:               u32,
 
     /// The allocated size of the file, in bytes.
     /// This value is an even multiple of the cluster size.
     /// This member is not valid if the LowestVcn member is nonzero.
-    pub allocated_length: u64,
-    pub file_size: u64,
+    pub allocated_length:  u64,
+    pub file_size:         u64,
     ///  Contains the valid data size in number of bytes.
     /// This value is not valid if the first VCN is nonzero.
     pub valid_data_length: u64,
-    pub total_allocated: Option<u64>,
+    pub total_allocated:   Option<u64>,
 }
 
 impl NonResidentHeader {
@@ -191,9 +196,10 @@ impl NonResidentHeader {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::MftAttributeHeader;
     use crate::attribute::MftAttributeType;
-    use std::io::Cursor;
 
     #[test]
     fn attribute_test_01_resident() {

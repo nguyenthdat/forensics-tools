@@ -1,12 +1,14 @@
 mod fixtures;
 
-use fixtures::*;
+use std::{
+    fs,
+    fs::File,
+    io::{Read, Write},
+    process::Command,
+};
 
 use assert_cmd::prelude::*;
-use std::fs;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::process::Command;
+use fixtures::*;
 use tempfile::tempdir;
 
 #[test]

@@ -1,23 +1,23 @@
-use crate::err::{Error, Result};
-use crate::impl_serialize_for_bitflags;
-
-use log::{trace, warn};
-
-use winstructs::ntfs::mft_reference::MftReference;
-
-use byteorder::{LittleEndian, ReadBytesExt};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use bitflags::bitflags;
-use serde::Serialize;
-use serde::ser::{self, SerializeStruct, Serializer};
+use byteorder::{LittleEndian, ReadBytesExt};
+use log::{trace, warn};
+use serde::{
+    Serialize,
+    ser::{self, SerializeStruct, Serializer},
+};
+use winstructs::ntfs::mft_reference::MftReference;
 
-use crate::attribute::header::{MftAttributeHeader, ResidentialHeader};
-use crate::attribute::x30::{FileNameAttr, FileNamespace};
-use crate::attribute::{MftAttribute, MftAttributeContent, MftAttributeType};
-
-use std::io::Read;
-use std::io::SeekFrom;
-use std::io::{Cursor, Seek};
+use crate::{
+    attribute::{
+        MftAttribute, MftAttributeContent, MftAttributeType,
+        header::{MftAttributeHeader, ResidentialHeader},
+        x30::{FileNameAttr, FileNamespace},
+    },
+    err::{Error, Result},
+    impl_serialize_for_bitflags,
+};
 
 const SEQUENCE_NUMBER_STRIDE: usize = 512;
 
@@ -27,8 +27,8 @@ pub const FILE_HEADER: &[u8; 4] = b"FILE";
 
 #[derive(Debug, Clone)]
 pub struct MftEntry {
-    pub header: EntryHeader,
-    pub data: Vec<u8>,
+    pub header:      EntryHeader,
+    pub data:        Vec<u8>,
     /// Valid fixup allows you to check if the fixup value in the entry's blocks
     /// matched the fixup array value. It is optional because in the case of
     /// from_buffer_skip_fixup(), no fixup is even checked, thus, valid_fixup is None
@@ -65,9 +65,10 @@ pub struct EntryHeader {
     /// Contains a $LogFile Sequence Number (LSN) (metz)
     pub metadata_transaction_journal: u64,
     /// The sequence number.
-    /// This value is incremented each time that a file record segment is freed; it is 0 if the segment is not used.
-    /// The SequenceNumber field of a file reference must match the contents of this field;
-    /// if they do not match, the file reference is incorrect and probably obsolete.
+    /// This value is incremented each time that a file record segment is freed; it is 0 if the
+    /// segment is not used. The SequenceNumber field of a file reference must match the
+    /// contents of this field; if they do not match, the file reference is incorrect and
+    /// probably obsolete.
     pub sequence: u16,
     pub hard_link_count: u16,
     /// The offset of the first attribute record, in bytes.
@@ -162,7 +163,7 @@ impl EntryHeader {
             used_entry_size: 0,
             total_entry_size: 0,
             base_reference: MftReference {
-                entry: 0,
+                entry:    0,
                 sequence: 0,
             },
             first_attribute_id: 0,
@@ -210,8 +211,8 @@ impl MftEntry {
         }
 
         Ok(MftEntry {
-            header: entry_header,
-            data: buffer,
+            header:      entry_header,
+            data:        buffer,
             valid_fixup: None,
         })
     }
@@ -235,7 +236,7 @@ impl MftEntry {
             None => {
                 // Try to take anything
                 file_name_attributes.first().cloned()
-            }
+            },
         }
     }
 
@@ -274,7 +275,8 @@ impl MftEntry {
             if end_of_sector_bytes != update_sequence {
                 // An item in the block did not match the fixup array value
                 warn!(
-                    "[entry: {}] fixup bytes are not equal to update sequence value - stride_number: {}, end_of_sector_bytes: {:?}, fixup_bytes: {:?}",
+                    "[entry: {}] fixup bytes are not equal to update sequence value - \
+                     stride_number: {}, end_of_sector_bytes: {:?}, fixup_bytes: {:?}",
                     header.record_number,
                     stride_number,
                     end_of_sector_bytes.to_vec(),
@@ -303,7 +305,8 @@ impl MftEntry {
         self.iter_attributes_matching(None)
     }
 
-    /// Returns an iterator over the attributes in the list given in `types`, skips other attributes.
+    /// Returns an iterator over the attributes in the list given in `types`, skips other
+    /// attributes.
     pub fn iter_attributes_matching(
         &self,
         types: Option<Vec<MftAttributeType>>,
@@ -332,7 +335,7 @@ impl MftEntry {
                     Err(e) => {
                         exhausted = true;
                         return Some(Err(e));
-                    }
+                    },
                 };
 
                 let header = match header {
@@ -362,7 +365,7 @@ impl MftEntry {
                             Ok(content) => content,
                             Err(e) => return Some(Err(e)),
                         }
-                    }
+                    },
                     ResidentialHeader::NonResident(ref resident) => {
                         match MftAttributeContent::from_stream_non_resident(
                             &mut cursor,
@@ -372,7 +375,7 @@ impl MftEntry {
                             Ok(content) => content,
                             Err(e) => return Some(Err(e)),
                         }
-                    }
+                    },
                 };
 
                 return Some(Ok(MftAttribute {
@@ -386,8 +389,9 @@ impl MftEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::EntryHeader;
     use std::io::Cursor;
+
+    use super::EntryHeader;
 
     #[test]
     fn mft_header_test_01() {

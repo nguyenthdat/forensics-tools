@@ -13,7 +13,7 @@ pub enum RunType {
 pub struct DataRun {
     pub lcn_offset: u64,
     pub lcn_length: u64,
-    pub run_type: RunType,
+    pub run_type:   RunType,
 }
 
 fn decode_run_value<T: Iterator<Item = u8>>(it: &mut T, bytes: u8) -> Option<u64> {

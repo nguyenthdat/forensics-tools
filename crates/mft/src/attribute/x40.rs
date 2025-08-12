@@ -1,20 +1,21 @@
 use std::io::{Read, Seek};
 
-use crate::err::{Error, Result};
 use serde::Serialize;
 use winstructs::guid::Guid;
+
+use crate::err::{Error, Result};
 
 /// $Data Attribute
 #[derive(Serialize, Clone, Debug)]
 pub struct ObjectIdAttr {
     /// Unique Id assigned to file
-    pub object_id: Guid,
+    pub object_id:       Guid,
     /// Volume where file was created
     pub birth_volume_id: Option<Guid>,
     /// Original Object Id of file
     pub birth_object_id: Option<Guid>,
     /// Domain in which object was created
-    pub domain_id: Option<Guid>,
+    pub domain_id:       Option<Guid>,
 }
 
 impl ObjectIdAttr {

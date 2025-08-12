@@ -1,3 +1,9 @@
+use std::{
+    collections::HashSet,
+    io::{self, BufRead, Write},
+    path::Path,
+};
+
 use anyhow::anyhow;
 use eframe::egui::{self, Ui};
 use epaint::{Color32, Shape, Stroke};
@@ -6,11 +12,6 @@ use num_cpus;
 use qsv::{
     cmd::extdedup::calculate_memory_limit,
     config::{Config, Delimiter},
-};
-use std::path::Path;
-use std::{
-    collections::HashSet,
-    io::{self, BufRead, Write},
 };
 use ustr::Ustr;
 

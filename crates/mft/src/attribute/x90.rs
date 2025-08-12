@@ -1,17 +1,17 @@
-use std::io::{Read, Seek};
-
-use crate::attribute::x30::FileNameAttr;
-use crate::err::{Error, Result};
-use crate::impl_serialize_for_bitflags;
-
-use byteorder::{LittleEndian, ReadBytesExt};
+use std::io::{Read, Seek, SeekFrom};
 
 use bitflags::bitflags;
+use byteorder::{LittleEndian, ReadBytesExt};
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 use serde::Serialize;
-use std::io::SeekFrom;
 use winstructs::ntfs::mft_reference::MftReference;
+
+use crate::{
+    attribute::x30::FileNameAttr,
+    err::{Error, Result},
+    impl_serialize_for_bitflags,
+};
 
 /// $IndexRoot Attribute
 #[derive(Serialize, Clone, Debug)]
@@ -27,25 +27,26 @@ pub struct IndexRootAttr {
     pub index_entry_number_of_cluster_blocks: u32, // really 1 byte with 3 bytes padding
 
     pub relative_offset_to_index_node: u32,
-    pub index_node_length: u32,
-    pub index_node_allocation_length: u32,
-    pub index_root_flags: IndexRootFlags, // 0x00 = Small Index (fits in Index Root); 0x01 = Large index (Index Allocation needed)
-    pub index_entries: IndexEntries,
+    pub index_node_length:             u32,
+    pub index_node_allocation_length:  u32,
+    pub index_root_flags:              IndexRootFlags, /* 0x00 = Small Index (fits in Index
+                                                        * Root); 0x01 = Large index (Index
+                                                        * Allocation needed) */
+    pub index_entries:                 IndexEntries,
 }
 
 /// Enum sources:
 /// https://opensource.apple.com/source/ntfs/ntfs-52/kext/ntfs_layout.h
 /// https://docs.huihoo.com/doxygen/linux/kernel/3.7/layout_8h_source.html
-///
 #[derive(Serialize, Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(u32)]
 #[derive(FromPrimitive)]
 pub enum IndexCollationRules {
-    CollationBinary = 0x00,
-    CollationFilename = 0x01,
+    CollationBinary      = 0x00,
+    CollationFilename    = 0x01,
     CollationUnicodeString = 0x02,
-    CollationNtofsUlong = 0x10,
-    CollationNtofsSid = 0x11,
+    CollationNtofsUlong  = 0x10,
+    CollationNtofsSid    = 0x11,
     CollationNtofsSecurityHash = 0x12,
     CollationNtofsUlongs = 0x13,
 }
@@ -70,7 +71,7 @@ impl IndexRootAttr {
                 return Err(Error::UnknownCollationType {
                     collation_type: collation_rule_val,
                 });
-            }
+            },
             Some(collation_rule) => collation_rule,
         };
         let index_entry_size = stream.read_u32::<LittleEndian>()?;
@@ -100,11 +101,11 @@ impl IndexRootAttr {
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct IndexEntryHeader {
-    pub mft_reference: MftReference,
+    pub mft_reference:       MftReference,
     pub index_record_length: u16,
-    pub attr_fname_length: u16,
-    pub flags: IndexEntryFlags,
-    pub fname_info: FileNameAttr,
+    pub attr_fname_length:   u16,
+    pub flags:               IndexEntryFlags,
+    pub fname_info:          FileNameAttr,
 }
 bitflags! {
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]

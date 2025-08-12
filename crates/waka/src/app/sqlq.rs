@@ -1,73 +1,74 @@
-use eframe::egui::ComboBox;
-use eframe::{egui, egui::Frame};
+use std::path::PathBuf;
+
+use eframe::{
+    egui,
+    egui::{ComboBox, Frame},
+};
 use epaint::{CornerRadius, Margin, StrokeKind};
 use polars_sql::keywords::{all_functions, all_keywords};
-use sqlparser::ast::Statement;
-use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
-use std::path::PathBuf;
+use sqlparser::{ast::Statement, dialect::GenericDialect, parser::Parser};
 use ustr::Ustr;
 
 use crate::app::table::DataTableArea;
 
 pub struct SqlEditor {
-    query: String,
-    result: String,
-    show_result: bool,
-    suggestions: Vec<String>,
-    show_suggestions: bool,
+    query:               String,
+    result:              String,
+    show_result:         bool,
+    suggestions:         Vec<String>,
+    show_suggestions:    bool,
     selected_suggestion: usize,
-    cursor_row: usize,
-    cursor_col: usize,
-    sql_keywords: Vec<&'static str>,
-    sql_functions: Vec<&'static str>,
-    current_word: String,
-    text_edit_rect: Option<egui::Rect>,
-    syntax_error: Option<String>,
-    limit: i32,
+    cursor_row:          usize,
+    cursor_col:          usize,
+    sql_keywords:        Vec<&'static str>,
+    sql_functions:       Vec<&'static str>,
+    current_word:        String,
+    text_edit_rect:      Option<egui::Rect>,
+    syntax_error:        Option<String>,
+    limit:               i32,
     editor_height_ratio: f32,
     // Error tracking fields
-    error_line: Option<usize>,
-    error_column: Option<usize>,
-    error_length: Option<usize>,
+    error_line:          Option<usize>,
+    error_column:        Option<usize>,
+    error_length:        Option<usize>,
     // New fields for the modern interface
-    search_column: String,
-    search_query: String,
+    search_column:       String,
+    search_query:        String,
 
-    show_borders: bool,
-    wrap_rows: bool,
+    show_borders:   bool,
+    wrap_rows:      bool,
     execution_time: String,
-    row_count: usize,
-    data_table: DataTableArea,
+    row_count:      usize,
+    data_table:     DataTableArea,
 }
 
 impl SqlEditor {
     pub fn new() -> Self {
         Self {
-            query: "SELECT * FROM data\nLIMIT 1000".to_string(),
-            result: String::new(),
-            show_result: true,
-            suggestions: Vec::new(),
-            show_suggestions: false,
+            query:               "SELECT * FROM data\nLIMIT 1000".to_string(),
+            result:              String::new(),
+            show_result:         true,
+            suggestions:         Vec::new(),
+            show_suggestions:    false,
             selected_suggestion: 0,
-            cursor_row: 1,
-            cursor_col: 1,
-            sql_keywords: all_keywords(),
-            sql_functions: all_functions(),
-            current_word: String::new(),
-            text_edit_rect: None,
-            syntax_error: None,
-            error_line: None,
-            error_column: None,
-            error_length: None,
-            limit: 1000,
+            cursor_row:          1,
+            cursor_col:          1,
+            sql_keywords:        all_keywords(),
+            sql_functions:       all_functions(),
+            current_word:        String::new(),
+            text_edit_rect:      None,
+            syntax_error:        None,
+            error_line:          None,
+            error_column:        None,
+            error_length:        None,
+            limit:               1000,
             editor_height_ratio: 0.35,
-            search_column: "altnameid".to_string(),
-            search_query: String::new(),
-            show_borders: true,
-            wrap_rows: false,
-            execution_time: "69ms".to_string(),
-            row_count: 1000,
+            search_column:       "altnameid".to_string(),
+            search_query:        String::new(),
+            show_borders:        true,
+            wrap_rows:           false,
+            execution_time:      "69ms".to_string(),
+            row_count:           1000,
 
             data_table: DataTableArea::default(),
         }
@@ -115,15 +116,15 @@ impl SqlEditor {
                     // Top section with title and close button
                     ui.horizontal(|ui| {
                         ui.add_space(16.0);
-                        
+
                         // Collapsible arrow and title
                         ui.label(
                             egui::RichText::new("▼ Run a Polars SQL query")
                                 .color(egui::Color32::WHITE)
                                 .size(14.0)
-                                .strong()
+                                .strong(),
                         );
-                        
+
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.add_space(16.0);
                             if ui.button("✕").clicked() {
@@ -131,30 +132,32 @@ impl SqlEditor {
                             }
                         });
                     });
-                    
+
                     ui.add_space(8.0);
-                    
+
                     // Instructions with bullet points
                     let instructions = [
                         "Run a Polars SQL query on your data using qsv sqlp.",
                         "Refer to your file as a table named <name of your CSV file>.",
-                        "Save SQL query output to a file using qsv sqlp or qsv to or to the clipboard using qsv clipboard.",
-                        "Important note: Decimal values may be truncated and very large SQL query outputs can cause issues.",
+                        "Save SQL query output to a file using qsv sqlp or qsv to or to the \
+                         clipboard using qsv clipboard.",
+                        "Important note: Decimal values may be truncated and very large SQL query \
+                         outputs can cause issues.",
                     ];
-                    
+
                     for instruction in instructions {
                         ui.horizontal(|ui| {
                             ui.add_space(16.0);
                             ui.label(
                                 egui::RichText::new(format!("• {}", instruction))
                                     .color(egui::Color32::from_rgb(200, 200, 200))
-                                    .size(12.0)
+                                    .size(12.0),
                             );
                         });
                     }
-                    
+
                     ui.add_space(12.0);
-                    
+
                     // Query input label
                     ui.horizontal(|ui| {
                         ui.add_space(16.0);
@@ -162,7 +165,7 @@ impl SqlEditor {
                             egui::RichText::new("Enter your Polars SQL query:")
                                 .color(egui::Color32::WHITE)
                                 .size(13.0)
-                                .strong()
+                                .strong(),
                         );
                     });
                 });
@@ -912,7 +915,7 @@ impl SqlEditor {
                 self.error_line = None;
                 self.error_column = None;
                 self.error_length = None;
-            }
+            },
             Err(error) => {
                 let clean_error = error
                     .replace("sql parser error: ", "")
@@ -924,7 +927,7 @@ impl SqlEditor {
 
                 // Try to extract line and column information from the error
                 self.extract_error_position(&error);
-            }
+            },
         }
     }
 

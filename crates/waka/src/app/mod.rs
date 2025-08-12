@@ -1,10 +1,11 @@
+use eframe::egui;
+use egui_extras::image;
+use epaint::TextureHandle;
+
 use crate::{
     APP_ICON, APP_VERSION,
     app::{basic::BasicEditor, ftsq::FtsEditor, sqlq::SqlEditor},
 };
-use eframe::egui;
-use egui_extras::image;
-use epaint::TextureHandle;
 
 mod basic;
 mod ftsq;
@@ -20,20 +21,20 @@ pub enum WakaMode {
 
 pub struct WakaApp {
     basic_editor: BasicEditor,
-    sql_editor: SqlEditor,
-    fts_editor: FtsEditor,
+    sql_editor:   SqlEditor,
+    fts_editor:   FtsEditor,
     current_mode: WakaMode,
-    logo_tex: Option<TextureHandle>,
+    logo_tex:     Option<TextureHandle>,
 }
 
 impl WakaApp {
     pub fn new() -> Self {
         WakaApp {
             basic_editor: BasicEditor::new(),
-            sql_editor: SqlEditor::new(),
+            sql_editor:   SqlEditor::new(),
             current_mode: WakaMode::Basic,
-            fts_editor: FtsEditor::new(),
-            logo_tex: None,
+            fts_editor:   FtsEditor::new(),
+            logo_tex:     None,
         }
     }
 
@@ -255,19 +256,19 @@ impl eframe::App for WakaApp {
             match self.current_mode {
                 WakaMode::Basic => {
                     self.basic_editor.show(ui);
-                }
+                },
                 WakaMode::FullTextSearch => {
                     // ui.label("Full Text Search Mode");
                     // TODO: Add full text search UI here
                     self.fts_editor.show(ui);
-                }
+                },
                 WakaMode::Sql => {
                     self.sql_editor.show(ui);
-                }
+                },
                 WakaMode::Workflow => {
                     ui.label("Workflow Mode");
                     // TODO: Add workflow UI here
-                }
+                },
             }
         });
     }

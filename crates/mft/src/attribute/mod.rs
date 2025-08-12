@@ -9,29 +9,31 @@ pub mod x40;
 pub mod x80;
 pub mod x90;
 
-use crate::err::Result;
-use crate::impl_serialize_for_bitflags;
-
 use std::io::{Cursor, Read, Seek};
 
 use bitflags::bitflags;
-
-use crate::attribute::raw::RawAttribute;
-use crate::attribute::x10::StandardInfoAttr;
-use crate::attribute::x20::AttributeListAttr;
-use crate::attribute::x30::FileNameAttr;
-
-use crate::attribute::header::{MftAttributeHeader, NonResidentHeader, ResidentHeader};
-use crate::attribute::non_resident_attr::NonResidentAttr;
-use crate::attribute::x40::ObjectIdAttr;
-use crate::attribute::x80::DataAttr;
-use crate::attribute::x90::IndexRootAttr;
 use serde::Serialize;
+
+use crate::{
+    attribute::{
+        header::{MftAttributeHeader, NonResidentHeader, ResidentHeader},
+        non_resident_attr::NonResidentAttr,
+        raw::RawAttribute,
+        x10::StandardInfoAttr,
+        x20::AttributeListAttr,
+        x30::FileNameAttr,
+        x40::ObjectIdAttr,
+        x80::DataAttr,
+        x90::IndexRootAttr,
+    },
+    err::Result,
+    impl_serialize_for_bitflags,
+};
 
 #[derive(Serialize, Clone, Debug)]
 pub struct MftAttribute {
     pub header: MftAttributeHeader,
-    pub data: MftAttributeContent,
+    pub data:   MftAttributeContent,
 }
 
 impl MftAttributeContent {
@@ -71,7 +73,7 @@ impl MftAttributeContent {
                     AttributeListAttr::from_stream(&mut new_stream, Some(content_size as u64))?;
 
                 Ok(MftAttributeContent::AttrX20(attr_list))
-            }
+            },
             MftAttributeType::FileName => Ok(MftAttributeContent::AttrX30(
                 FileNameAttr::from_stream(stream)?,
             )),
@@ -97,7 +99,8 @@ impl MftAttributeContent {
         }
     }
 
-    /// Converts the given attributes into a 'AttributeListAttr', consuming the object attribute object.
+    /// Converts the given attributes into a 'AttributeListAttr', consuming the object attribute
+    /// object.
     pub fn into_attribute_list(self) -> Option<AttributeListAttr> {
         match self {
             MftAttributeContent::AttrX20(content) => Some(content),
@@ -120,7 +123,9 @@ impl MftAttributeContent {
             _ => None,
         }
     }
-    /// Converts the given attributes into a `StandardInfoAttr`, consuming the object attribute object.
+
+    /// Converts the given attributes into a `StandardInfoAttr`, consuming the object attribute
+    /// object.
     pub fn into_standard_info(self) -> Option<StandardInfoAttr> {
         match self {
             MftAttributeContent::AttrX10(content) => Some(content),
@@ -144,7 +149,8 @@ impl MftAttributeContent {
         }
     }
 
-    /// Converts the given attributes into a `NonResidentAttr`, consuming the object attribute object.
+    /// Converts the given attributes into a `NonResidentAttr`, consuming the object attribute
+    /// object.
     pub fn into_data_runs(self) -> Option<NonResidentAttr> {
         match self {
             MftAttributeContent::DataRun(content) => Some(content),
@@ -172,36 +178,38 @@ pub enum MftAttributeContent {
 #[derive(Serialize, Debug, Clone, FromPrimitive, ToPrimitive, PartialOrd, PartialEq)]
 #[repr(u32)]
 pub enum MftAttributeType {
-    /// File attributes (such as read-only and archive), time stamps (such as file creation and last modified), and the hard link count.
+    /// File attributes (such as read-only and archive), time stamps (such as file creation and last
+    /// modified), and the hard link count.
     StandardInformation = 0x10_u32,
-    /// A list of attributes that make up the file and the file reference of the MFT file record in which each attribute is located.
-    AttributeList = 0x20_u32,
+    /// A list of attributes that make up the file and the file reference of the MFT file record in
+    /// which each attribute is located.
+    AttributeList       = 0x20_u32,
     /// The name of the file, in Unicode characters.
-    FileName = 0x30_u32,
+    FileName            = 0x30_u32,
     /// An 16-byte object identifier assigned by the link-tracking service.
-    ObjectId = 0x40_u32,
+    ObjectId            = 0x40_u32,
     /// File's access control list and security properties
-    SecurityDescriptor = 0x50_u32,
+    SecurityDescriptor  = 0x50_u32,
     /// The volume label.
     /// Present in the $Volume file.
-    VolumeName = 0x60_u32,
+    VolumeName          = 0x60_u32,
     /// The volume information.
     /// Present in the $Volume file.
-    VolumeInformation = 0x70_u32,
+    VolumeInformation   = 0x70_u32,
     /// The contents of the file.
-    DATA = 0x80_u32,
+    DATA                = 0x80_u32,
     /// Used to implement filename allocation for large directories.
-    IndexRoot = 0x90_u32,
+    IndexRoot           = 0x90_u32,
     /// Used to implement filename allocation for large directories.
-    IndexAllocation = 0xA0_u32,
+    IndexAllocation     = 0xA0_u32,
     /// A bitmap index for a large directory.
-    BITMAP = 0xB0_u32,
+    BITMAP              = 0xB0_u32,
     /// The reparse point data.
-    ReparsePoint = 0xC0_u32,
+    ReparsePoint        = 0xC0_u32,
     /// Used for backward compatibility with OS/2 applications (HPFS)
-    EaInformation = 0xD0_u32,
+    EaInformation       = 0xD0_u32,
     /// Used for backward compatibility with OS/2 applications (HPFS)
-    EA = 0xE0_u32,
+    EA                  = 0xE0_u32,
     /// Keys and other information about encrypted attributes (NTFS 3.0+; Windows 2000+)
     LoggedUtilityStream = 0x100_u32,
 }

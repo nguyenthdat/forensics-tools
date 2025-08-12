@@ -1,24 +1,24 @@
-use clap::{Arg, ArgAction, ArgMatches};
-use indoc::indoc;
-use log::Level;
-
-use mft::MftEntry;
-use mft::attribute::MftAttributeType;
-use mft::mft::MftParser;
-
-use dialoguer::Confirm;
-use mft::csv::FlatMftEntryWithName;
+use std::{
+    fmt::Write as FmtWrite,
+    fs,
+    fs::File,
+    io,
+    io::{Read, Seek, Write},
+    ops::RangeInclusive,
+    path,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use anyhow::{Context, Error, Result, anyhow};
-use std::fs::File;
-use std::io::{Read, Seek, Write};
-use std::path::{Path, PathBuf};
-
-use mft::entry::ZERO_HEADER;
-use std::fmt::Write as FmtWrite;
-use std::ops::RangeInclusive;
-use std::str::FromStr;
-use std::{fs, io, path};
+use clap::{Arg, ArgAction, ArgMatches};
+use dialoguer::Confirm;
+use indoc::indoc;
+use log::Level;
+use mft::{
+    MftEntry, attribute::MftAttributeType, csv::FlatMftEntryWithName, entry::ZERO_HEADER,
+    mft::MftParser,
+};
 
 #[derive(Debug, PartialOrd, PartialEq)]
 #[allow(clippy::upper_case_acronyms)]
@@ -76,8 +76,9 @@ impl FromStr for Ranges {
 
 #[cfg(test)]
 mod tests {
-    use super::Ranges;
     use std::str::FromStr;
+
+    use super::Ranges;
 
     #[test]
     fn it_works_with_single_number() {
@@ -129,13 +130,13 @@ mod tests {
 }
 
 struct MftDump {
-    filepath: PathBuf,
+    filepath:            PathBuf,
     // We use an option here to be able to move the output out of mftdump from a mutable reference.
-    output: Option<Box<dyn Write>>,
+    output:              Option<Box<dyn Write>>,
     data_streams_output: Option<PathBuf>,
-    verbosity_level: Option<Level>,
-    output_format: OutputFormat,
-    ranges: Option<Ranges>,
+    verbosity_level:     Option<Level>,
+    output_format:       OutputFormat,
+    ranges:              Option<Ranges>,
 }
 
 impl MftDump {
@@ -161,7 +162,7 @@ impl MftDump {
                         path,
                         e
                     ));
-                }
+                },
             }
         } else {
             Some(Box::new(io::stdout()))
@@ -183,7 +184,7 @@ impl MftDump {
             _ => {
                 eprintln!("using more than  -vvv does not affect verbosity level");
                 Some(Level::Trace)
-            }
+            },
         };
 
         let ranges = match matches.get_one::<&String>("entry-range") {
@@ -262,7 +263,7 @@ impl MftDump {
                         fs::create_dir_all(parent)?;
                         Ok(File::create(p)?)
                     }
-                }
+                },
                 None => Err(anyhow!("Output file cannot be root.")),
             }
         }
@@ -282,7 +283,7 @@ impl MftDump {
                 Some(csv::Writer::from_writer(self.output.take().expect(
                     "There can only be one flow accessing the output at a time",
                 )))
-            }
+            },
             _ => None,
         };
 
@@ -308,7 +309,7 @@ impl MftDump {
                 Err(error) => {
                     eprintln!("{error}");
                     continue;
-                }
+                },
             };
 
             if let Some(data_streams_dir) = &self.data_streams_output
@@ -345,8 +346,8 @@ impl MftDump {
 
                     if PathBuf::from(&data_stream_path).exists() {
                         return Err(anyhow!(
-                            "Tried to override an existing stream {} already exists!\
-                                 This is a bug, please report to github!",
+                            "Tried to override an existing stream {} already exists!This is a \
+                             bug, please report to github!",
                             data_stream_path
                         ));
                     }
@@ -378,7 +379,7 @@ impl MftDump {
                 simplelog::Config::default(),
                 io::stderr(),
             ) {
-                Ok(_) => {}
+                Ok(_) => {},
                 Err(e) => eprintln!("Failed to initialize logging: {e}"),
             };
         }
@@ -453,7 +454,9 @@ fn main() -> Result<()> {
                 .short('o')
                 .long("output-format")
                 .action(ArgAction::Set)
-                .value_parser(clap::builder::PossibleValuesParser::new(["csv", "json", "jsonl"]))
+                .value_parser(clap::builder::PossibleValuesParser::new([
+                    "csv", "json", "jsonl",
+                ]))
                 .default_value("json")
                 .help("Output format."),
         )
@@ -462,47 +465,64 @@ fn main() -> Result<()> {
                 .long("ranges")
                 .short('r')
                 .action(ArgAction::Set)
-                .help(indoc!("Dumps only the given entry range(s), for example, `1-15,30` will dump entries 1-15, and 30")),
+                .help(indoc!(
+                    "Dumps only the given entry range(s), for example, `1-15,30` will dump \
+                     entries 1-15, and 30"
+                )),
         )
         .arg(
             Arg::new("output-target")
                 .long("output")
                 .short('f')
                 .action(ArgAction::Set)
-                .help(indoc!("Writes output to the file specified instead of stdout, errors will still be printed to stderr.
-                       Will ask for confirmation before overwriting files, to allow overwriting, pass `--no-confirm-overwrite`
-                       Will create parent directories if needed.")),
+                .help(indoc!(
+                    "Writes output to the file specified instead of stdout, errors will still be \
+                     printed to stderr.
+                       Will ask for confirmation before overwriting files, to allow overwriting, \
+                     pass `--no-confirm-overwrite`
+                       Will create parent directories if needed."
+                )),
         )
         .arg(
             Arg::new("data-streams-target")
                 .long("extract-resident-streams")
                 .short('e')
                 .action(ArgAction::Set)
-                .help(indoc!("Writes resident data streams to the given directory.
-                             Resident streams will be named like - `{path}__<random_bytes>_{stream_number}_{stream_name}.dontrun`
-                             random is added to prevent collisions.")),
+                .help(indoc!(
+                    "Writes resident data streams to the given directory.
+                             Resident streams will be named like - \
+                     `{path}__<random_bytes>_{stream_number}_{stream_name}.dontrun`
+                             random is added to prevent collisions."
+                )),
         )
         .arg(
             Arg::new("no-confirm-overwrite")
                 .long("no-confirm-overwrite")
                 .action(ArgAction::SetTrue)
-                .help(indoc!("When set, will not ask for confirmation before overwriting files, useful for automation")),
+                .help(indoc!(
+                    "When set, will not ask for confirmation before overwriting files, useful for \
+                     automation"
+                )),
         )
-        .arg(Arg::new("verbose")
-            .short('v')
-            .action(ArgAction::Count)
-            .help(indoc!(r#"
+        .arg(
+            Arg::new("verbose")
+                .short('v')
+                .action(ArgAction::Count)
+                .help(indoc!(
+                    r#"
             Sets debug prints level for the application:
                 -v   - info
                 -vv  - debug
                 -vvv - trace
-            NOTE: trace output is only available in debug builds, as it is extremely verbose."#))
+            NOTE: trace output is only available in debug builds, as it is extremely verbose."#
+                )),
         )
         .arg(
             Arg::new("backtraces")
                 .long("backtraces")
                 .action(ArgAction::SetTrue)
-                .help("If set, a backtrace will be printed with some errors if available"))
+                .help("If set, a backtrace will be printed with some errors if available"),
+        )
         .get_matches();
 
     let mut app = MftDump::from_cli_matches(&matches).context("Failed setting up the app")?;

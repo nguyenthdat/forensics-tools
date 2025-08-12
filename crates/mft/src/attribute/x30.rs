@@ -1,43 +1,41 @@
 use std::io::{Read, Seek};
 
-use crate::attribute::FileAttributeFlags;
-use crate::err::{Error, Result};
-use log::trace;
-
 use byteorder::{LittleEndian, ReadBytesExt};
-use encoding::all::UTF_16LE;
-use encoding::{DecoderTrap, Encoding};
-
 use chrono::{DateTime, Utc};
+use encoding::{DecoderTrap, Encoding, all::UTF_16LE};
+use log::trace;
 use num_traits::FromPrimitive;
 use serde::Serialize;
+use winstructs::{ntfs::mft_reference::MftReference, timestamp::WinTimestamp};
 
-use winstructs::ntfs::mft_reference::MftReference;
-use winstructs::timestamp::WinTimestamp;
+use crate::{
+    attribute::FileAttributeFlags,
+    err::{Error, Result},
+};
 
 #[derive(FromPrimitive, Serialize, Clone, Debug, PartialOrd, PartialEq)]
 #[repr(u8)]
 pub enum FileNamespace {
-    POSIX = 0,
-    Win32 = 1,
-    DOS = 2,
+    POSIX       = 0,
+    Win32       = 1,
+    DOS         = 2,
     Win32AndDos = 3,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct FileNameAttr {
-    pub parent: MftReference,
-    pub created: DateTime<Utc>,
-    pub modified: DateTime<Utc>,
-    pub mft_modified: DateTime<Utc>,
-    pub accessed: DateTime<Utc>,
-    pub logical_size: u64,
+    pub parent:        MftReference,
+    pub created:       DateTime<Utc>,
+    pub modified:      DateTime<Utc>,
+    pub mft_modified:  DateTime<Utc>,
+    pub accessed:      DateTime<Utc>,
+    pub logical_size:  u64,
     pub physical_size: u64,
-    pub flags: FileAttributeFlags,
+    pub flags:         FileAttributeFlags,
     pub reparse_value: u32,
-    pub name_length: u8,
-    pub namespace: FileNamespace,
-    pub name: String,
+    pub name_length:   u8,
+    pub namespace:     FileNamespace,
+    pub name:          String,
 }
 
 impl FileNameAttr {

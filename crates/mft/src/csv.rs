@@ -1,14 +1,16 @@
-use crate::attribute::header::ResidentialHeader;
-
-use crate::attribute::{FileAttributeFlags, MftAttributeType};
-use crate::entry::EntryFlags;
-use crate::{MftAttribute, MftEntry, MftParser};
-
-use serde::Serialize;
+use std::{
+    io::{Read, Seek},
+    path::PathBuf,
+};
 
 use chrono::{DateTime, Utc};
-use std::io::{Read, Seek};
-use std::path::PathBuf;
+use serde::Serialize;
+
+use crate::{
+    MftAttribute, MftEntry, MftParser,
+    attribute::{FileAttributeFlags, MftAttributeType, header::ResidentialHeader},
+    entry::EntryFlags,
+};
 
 /// Used for CSV output
 #[derive(Serialize)]
@@ -19,14 +21,14 @@ pub struct FlatMftEntryWithName {
     pub entry_id: u64,
     pub sequence: u16,
 
-    pub base_entry_id: u64,
+    pub base_entry_id:       u64,
     pub base_entry_sequence: u16,
 
     pub hard_link_count: u16,
-    pub flags: EntryFlags,
+    pub flags:           EntryFlags,
 
     /// The size of the file, in bytes.
-    pub used_entry_size: u32,
+    pub used_entry_size:  u32,
     pub total_entry_size: u32,
 
     /// The size of the file, if available, from the X80 attribute.
@@ -36,21 +38,21 @@ pub struct FlatMftEntryWithName {
     /// Indicates whether the record is a directory.
     pub is_a_directory: bool,
     /// Indicates whether the record has the `ALLOCATED` bit turned off.
-    pub is_deleted: bool,
+    pub is_deleted:     bool,
 
     /// Indicates whether the record has alternate data streams.
     pub has_alternate_data_streams: bool,
 
     /// All of these fields are present for entries that have an 0x10 attribute.
-    pub standard_info_flags: Option<FileAttributeFlags>,
+    pub standard_info_flags:         Option<FileAttributeFlags>,
     pub standard_info_last_modified: Option<DateTime<Utc>>,
-    pub standard_info_last_access: Option<DateTime<Utc>>,
-    pub standard_info_created: Option<DateTime<Utc>>,
+    pub standard_info_last_access:   Option<DateTime<Utc>>,
+    pub standard_info_created:       Option<DateTime<Utc>>,
     /// All of these fields are present for entries that have an 0x30 attribute.
-    pub file_name_flags: Option<FileAttributeFlags>,
-    pub file_name_last_modified: Option<DateTime<Utc>>,
-    pub file_name_last_access: Option<DateTime<Utc>>,
-    pub file_name_created: Option<DateTime<Utc>>,
+    pub file_name_flags:             Option<FileAttributeFlags>,
+    pub file_name_last_modified:     Option<DateTime<Utc>>,
+    pub file_name_last_access:       Option<DateTime<Utc>>,
+    pub file_name_created:           Option<DateTime<Utc>>,
 
     pub full_path: PathBuf,
 }

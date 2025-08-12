@@ -8,13 +8,16 @@ mod tests {}
 
 #[cfg(not(target_os = "windows"))]
 mod tests {
-    use super::fixtures::*;
+    use std::{
+        fs::File,
+        io::{Read, Write},
+    };
 
     use assert_cmd::cargo::cargo_bin;
     use rexpect::spawn;
-    use std::fs::File;
-    use std::io::{Read, Write};
     use tempfile::tempdir;
+
+    use super::fixtures::*;
 
     // It should behave the same on windows, but interactive testing relies on unix pty internals.
     #[test]
