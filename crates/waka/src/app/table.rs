@@ -113,6 +113,8 @@ pub struct DataTableArea {
     pub export_only_filtered: bool,
     pub export_status: Option<Ustr>,
     pub pending_reload: bool,
+    pub sort_col: Option<usize>,
+    pub sort_desc: bool,
 }
 
 impl Default for DataTableArea {
@@ -127,6 +129,8 @@ impl Default for DataTableArea {
             export_only_filtered: true,
             export_status: None,
             pending_reload: false,
+            sort_col: None,
+            sort_desc: false,
         }
     }
 }
@@ -174,8 +178,8 @@ impl DataTableArea {
                         .striped(true)
                         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
                         .resizable(true)
-                        .min_scrolled_height(0.0)   // allow small tables
-                        .max_scroll_height(max_h);  // fill remaining vertical space
+                        .min_scrolled_height(0.0) // allow small tables
+                        .max_scroll_height(max_h); // fill remaining vertical space
                     for _ in 0..ncols {
                         tbl = tbl.column(Column::initial(col_width).clip(true));
                     }
@@ -194,7 +198,44 @@ impl DataTableArea {
                                             .color(Color32::WHITE),
                                     )
                                     .truncate();
-                                    ui.add_sized(egui::vec2((avail - 24.0).max(0.0), 20.0), header_label);
+                                    ui.add_sized(
+                                        egui::vec2((avail - 24.0).max(0.0), 20.0),
+                                        header_label,
+                                    );
+
+                                    // sort buttons (Excel-like)
+                                    let is_active_sort = self.sort_col == Some(ci);
+                                    let asc_text = if is_active_sort && !self.sort_desc {
+                                        RichText::new("▲")
+                                            .strong()
+                                            .size(12.0)
+                                            .color(Color32::from_rgb(0, 200, 120))
+                                    } else {
+                                        RichText::new("▲").size(12.0).color(Color32::from_gray(230))
+                                    };
+                                    let desc_text = if is_active_sort && self.sort_desc {
+                                        RichText::new("▼")
+                                            .strong()
+                                            .size(12.0)
+                                            .color(Color32::from_rgb(0, 200, 120))
+                                    } else {
+                                        RichText::new("▼").size(12.0).color(Color32::from_gray(230))
+                                    };
+                                    if ui
+                                        .add(Button::new(asc_text))
+                                        .on_hover_text("Sort ascending")
+                                        .clicked()
+                                    {
+                                        self.on_sort_click(ci, false);
+                                    }
+                                    if ui
+                                        .add(Button::new(desc_text))
+                                        .on_hover_text("Sort descending")
+                                        .clicked()
+                                    {
+                                        self.on_sort_click(ci, true);
+                                    }
+                                    ui.add_space(2.0);
 
                                     // filter dropdown button (menu_button replacement)
                                     let mut apply_now = false;
@@ -206,11 +247,12 @@ impl DataTableArea {
                                         .map(|f| !f.selected.is_empty())
                                         .unwrap_or(false);
 
-                                    let btn_text = RichText::new("Filter ▾").size(12.0).color(if active {
-                                        Color32::from_rgb(0, 200, 120)
-                                    } else {
-                                        Color32::from_gray(230)
-                                    });
+                                    let btn_text =
+                                        RichText::new("Filter ▾").size(12.0).color(if active {
+                                            Color32::from_rgb(0, 200, 120)
+                                        } else {
+                                            Color32::from_gray(230)
+                                        });
                                     let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
                                     let btn_resp = ui.add(Button::new(btn_text));
                                     if btn_resp.clicked() {
@@ -234,7 +276,12 @@ impl DataTableArea {
                                                 if f.use_regex {
                                                     let mut rbuf = f.regex_text.to_string();
                                                     let edited = ui
-                                                        .add(TextEdit::singleline(&mut rbuf).hint_text("Regex pattern (e.g. ^foo.*bar$)"))
+                                                        .add(
+                                                            TextEdit::singleline(&mut rbuf)
+                                                                .hint_text(
+                                                                "Regex pattern (e.g. ^foo.*bar$)",
+                                                            ),
+                                                        )
                                                         .changed();
                                                     if edited {
                                                         f.regex_text = ustr(&rbuf);
@@ -245,9 +292,12 @@ impl DataTableArea {
                                                     }
                                                     if let Some(err) = &f.regex_error {
                                                         ui.label(
-                                                            RichText::new(format!("⚠ Invalid regex: {}", err))
-                                                                .color(Color32::from_rgb(220, 90, 90))
-                                                                .size(11.0),
+                                                            RichText::new(format!(
+                                                                "⚠ Invalid regex: {}",
+                                                                err
+                                                            ))
+                                                            .color(Color32::from_rgb(220, 90, 90))
+                                                            .size(11.0),
                                                         );
                                                     }
                                                     ui.add_space(4.0);
@@ -255,7 +305,10 @@ impl DataTableArea {
 
                                                 let mut buf = f.search.to_string();
                                                 if ui
-                                                    .add(TextEdit::singleline(&mut buf).hint_text("Search values..."))
+                                                    .add(
+                                                        TextEdit::singleline(&mut buf)
+                                                            .hint_text("Search values..."),
+                                                    )
                                                     .changed()
                                                 {
                                                     f.search = ustr(&buf);
@@ -267,38 +320,61 @@ impl DataTableArea {
                                                     .as_ref()
                                                     .map(|v| v.as_slice())
                                                     .unwrap_or(&[]);
-                                                let search_lower = f.search.as_str().to_ascii_lowercase();
+                                                let search_lower =
+                                                    f.search.as_str().to_ascii_lowercase();
 
-                                                let mut selected_set: std::collections::HashSet<Ustr> =
-                                                    f.selected.iter().cloned().collect();
-                                                egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                                                    for val in values_slice.iter() {
-                                                        if !search_lower.is_empty()
-                                                            && !val.as_str().to_ascii_lowercase().contains(&search_lower)
-                                                        {
-                                                            continue;
-                                                        }
-
-                                                        let mut checked = selected_set.contains(val);
-                                                        if ui.checkbox(&mut checked, val.as_str()).clicked() {
-                                                            if checked {
-                                                                selected_set.insert(val.clone());
-                                                            } else {
-                                                                selected_set.remove(val);
+                                                let mut selected_set: std::collections::HashSet<
+                                                    Ustr,
+                                                > = f.selected.iter().cloned().collect();
+                                                egui::ScrollArea::vertical()
+                                                    .max_height(180.0)
+                                                    .show(ui, |ui| {
+                                                        for val in values_slice.iter() {
+                                                            if !search_lower.is_empty()
+                                                                && !val
+                                                                    .as_str()
+                                                                    .to_ascii_lowercase()
+                                                                    .contains(&search_lower)
+                                                            {
+                                                                continue;
                                                             }
-                                                            apply_now = true;
+
+                                                            let mut checked =
+                                                                selected_set.contains(val);
+                                                            if ui
+                                                                .checkbox(
+                                                                    &mut checked,
+                                                                    val.as_str(),
+                                                                )
+                                                                .clicked()
+                                                            {
+                                                                if checked {
+                                                                    selected_set
+                                                                        .insert(val.clone());
+                                                                } else {
+                                                                    selected_set.remove(val);
+                                                                }
+                                                                apply_now = true;
+                                                            }
                                                         }
-                                                    }
-                                                });
+                                                    });
                                                 f.selected = selected_set.into_iter().collect();
 
                                                 ui.separator();
                                                 ui.horizontal(|ui| {
-                                                    if ui.checkbox(&mut f.case_insensitive, "Aa").on_hover_text("Case-insensitive").changed() {
+                                                    if ui
+                                                        .checkbox(&mut f.case_insensitive, "Aa")
+                                                        .on_hover_text("Case-insensitive")
+                                                        .changed()
+                                                    {
                                                         f.rebuild_regex();
                                                         apply_now = true;
                                                     }
-                                                    if ui.checkbox(&mut f.use_regex, ".*").on_hover_text("Use regex").changed() {
+                                                    if ui
+                                                        .checkbox(&mut f.use_regex, ".*")
+                                                        .on_hover_text("Use regex")
+                                                        .changed()
+                                                    {
                                                         f.rebuild_regex();
                                                         apply_now = true;
                                                     }
@@ -341,8 +417,12 @@ impl DataTableArea {
                                 for ci in 0..ncols {
                                     row.col(|ui| {
                                         let txt = r.get(ci).map(|s| s.as_str()).unwrap_or("");
-                                        let label = egui::Label::new(RichText::new(txt).size(12.0)).truncate();
-                                        ui.add_sized(egui::vec2(ui.available_width(), row_h - 2.0), label);
+                                        let label = egui::Label::new(RichText::new(txt).size(12.0))
+                                            .truncate();
+                                        ui.add_sized(
+                                            egui::vec2(ui.available_width(), row_h - 2.0),
+                                            label,
+                                        );
                                     });
                                 }
                             });
@@ -1625,5 +1705,63 @@ impl DataTableArea {
             fp.filtered_indices = Some(out);
             fp.page = 0;
         }
+    }
+
+    fn on_sort_click(&mut self, col: usize, descending: bool) {
+        // Run sort and update UI state
+        match self.sort_current_by_column(col, descending) {
+            Ok(()) => {
+                self.sort_col = Some(col);
+                self.sort_desc = descending;
+                self.export_status = Some(ustr("✅ Sorted"));
+            }
+            Err(e) => {
+                self.export_status = Some(ustr(&format!("⚠ Sort failed: {e}")));
+            }
+        }
+        // Force preview reload after sort
+        self.reload_current_preview_page();
+    }
+
+    /// Sort the current file by a column using qsv's external sorter.
+    fn sort_current_by_column(&mut self, col: usize, descending: bool) -> anyhow::Result<()> {
+        let Some(fp_snapshot) = self.current_fp().cloned() else {
+            return Err(anyhow!("No file loaded"));
+        };
+        let input_path = fp_snapshot.file_path.to_string();
+
+        // Create a persistent temp destination for the sorted CSV
+        let tmp_dir = std::env::temp_dir();
+        let tmp_file = tempfile::Builder::new()
+            .prefix("waka_sorted_")
+            .suffix(".csv")
+            .tempfile_in(&tmp_dir)?;
+        let tmppath = tmp_file.into_temp_path();
+        let kept_path = tmppath.keep()?;
+
+        // Call into qsv's library external sorter
+        util::external_sort_csv_by_columns(
+            &input_path,
+            &kept_path,
+            &[col],
+            descending,
+            None, // use default delimiter
+            tmp_dir.to_string_lossy().as_ref(),
+            None,  // default memory limit heuristic
+            None,  // let qsv decide threads
+            false, // we assume headers are present and should be kept at top
+        )
+        .map_err(|e| anyhow!(format!("{e}")))?;
+
+        // Replace current file path with the sorted result, preserve filters by clearing indices
+        if let Some(fp) = self.current_fp_mut() {
+            fp.file_path = ustr(&kept_path.to_string_lossy());
+            fp.headers.clear(); // force re-read headers from new file
+            fp.filtered_indices = None; // reset filter hits; filters UI selections remain
+            fp.page = 0;
+            fp.load_error = None;
+            fp.total_rows = None; // force recount
+        }
+        Ok(())
     }
 }
