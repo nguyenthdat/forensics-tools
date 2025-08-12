@@ -1,9 +1,10 @@
-use eframe::egui;
-
 use crate::{
-    APP_VERSION,
+    APP_ICON, APP_VERSION,
     app::{basic::BasicEditor, ftsq::FtsEditor, sqlq::SqlEditor},
 };
+use eframe::egui;
+use egui_extras::image;
+use epaint::TextureHandle;
 
 mod basic;
 mod ftsq;
@@ -22,6 +23,7 @@ pub struct WakaApp {
     sql_editor: SqlEditor,
     fts_editor: FtsEditor,
     current_mode: WakaMode,
+    logo_tex: Option<TextureHandle>,
 }
 
 impl WakaApp {
@@ -31,12 +33,28 @@ impl WakaApp {
             sql_editor: SqlEditor::new(),
             current_mode: WakaMode::Basic,
             fts_editor: FtsEditor::new(),
+            logo_tex: None,
         }
+    }
+
+    fn ensure_logo(&mut self, ctx: &egui::Context) {
+        if self.logo_tex.is_some() {
+            return;
+        }
+
+        // Decode PNG bytes into an egui::ColorImage and upload as a texture once
+        let color_image = image::load_image_bytes(APP_ICON).expect("invalid PNG logo bytes");
+
+        // Upload to a GPU texture once and keep the handle
+        let tex = ctx.load_texture("waka_png_logo", color_image, egui::TextureOptions::LINEAR);
+        self.logo_tex = Some(tex);
     }
 }
 
 impl eframe::App for WakaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ensure_logo(ctx);
+
         // Set dark theme
         ctx.set_visuals(egui::Visuals::dark());
 
@@ -49,21 +67,31 @@ impl eframe::App for WakaApp {
                     // Logo and app name
                     ui.add_space(16.0);
 
-                    // Circle logo placeholder (you can replace with actual image)
+                    // Draw the PNG logo (uploaded once)
                     let logo_response =
                         ui.allocate_response(egui::Vec2::splat(32.0), egui::Sense::hover());
-                    ui.painter().circle_filled(
-                        logo_response.rect.center(),
-                        16.0,
-                        egui::Color32::from_rgb(0, 150, 255), // Blue color
-                    );
-                    ui.painter().text(
-                        logo_response.rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "W",
-                        egui::FontId::proportional(18.0),
-                        egui::Color32::WHITE,
-                    );
+                    if let Some(tex) = &self.logo_tex {
+                        // Center the 32x32 image in the allocated rect
+                        let rect = logo_response.rect;
+                        let size = egui::vec2(32.0, 32.0);
+                        let pos = egui::pos2(
+                            rect.center().x - size.x * 0.5,
+                            rect.center().y - size.y * 0.5,
+                        );
+                        ui.painter().image(
+                            tex.id(),
+                            egui::Rect::from_min_size(pos, size),
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    } else {
+                        // Fallback placeholder
+                        ui.painter().circle_filled(
+                            logo_response.rect.center(),
+                            16.0,
+                            egui::Color32::from_rgb(0, 150, 255),
+                        );
+                    }
 
                     ui.add_space(8.0);
 

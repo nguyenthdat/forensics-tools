@@ -11,8 +11,8 @@ mod util;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-
 const APP_TITLE: &str = "Waka Forensics Suite";
+const APP_ICON: &[u8] = include_bytes!("../../../assets/logo.png");
 
 fn main() -> eframe::Result<()> {
     let native_options = NativeOptions {
@@ -21,7 +21,7 @@ fn main() -> eframe::Result<()> {
             .with_min_inner_size([800.0, 600.0])
             .with_taskbar(true)
             .with_inner_size([1200.0, 800.0])
-            .with_icon(eframe::icon_data::from_png_bytes(&[]).unwrap_or_default()),
+            .with_icon(eframe::icon_data::from_png_bytes(APP_ICON).unwrap_or_default()),
         ..Default::default()
     };
 
