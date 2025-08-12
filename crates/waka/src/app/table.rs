@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 
@@ -1183,6 +1182,7 @@ impl DataTableArea {
                     ui.radio_value(&mut self.export_format, ExportFormat::Xlsx, "XLSX");
                     ui.radio_value(&mut self.export_format, ExportFormat::Ods, "ODS");
                     ui.radio_value(&mut self.export_format, ExportFormat::Parquet, "Parquet");
+                    ui.radio_value(&mut self.export_format, ExportFormat::Json, "JSON");
                 });
                 ui.add_space(4.0);
                 ui.checkbox(&mut self.export_only_filtered, "Only export filtered rows");
@@ -1423,6 +1423,32 @@ impl DataTableArea {
         }
     }
 
+    // --- Performance helpers for filtering on large files ---
+    #[inline]
+    fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> HashSet<Vec<u8>> {
+        let mut set = HashSet::with_capacity(selected.len());
+        for v in selected {
+            let mut bytes = v.as_str().as_bytes().to_vec();
+            if case_insensitive {
+                for b in &mut bytes {
+                    *b = b.to_ascii_lowercase();
+                }
+            }
+            set.insert(bytes);
+        }
+        set
+    }
+
+    #[inline]
+    fn lower_ascii_into<'a>(buf: &'a mut Vec<u8>, src: &[u8]) -> &'a [u8] {
+        buf.clear();
+        buf.reserve(src.len());
+        for &b in src {
+            buf.push(b.to_ascii_lowercase());
+        }
+        &buf[..]
+    }
+
     pub fn apply_filters_for_current_file(&mut self) {
         let Some(fp) = self.current_fp_mut() else {
             return;
@@ -1431,14 +1457,124 @@ impl DataTableArea {
             return;
         }
 
-        // Build active filters (now supporting regex)
+        // Build active filters once (avoid per-row allocations)
+        // We'll prepare two variants: one optimized for byte records (index),
+        // and one for string records (reader).
+        struct ActiveBytes {
+            col: usize,
+            set: Option<HashSet<Vec<u8>>>, // normalized per case-insensitive flag
+            casei: bool,
+            regex: Option<Regex>,
+        }
+
+        let active_any = fp
+            .filters
+            .iter()
+            .any(|f| !f.selected.is_empty() || f.use_regex);
+        if !active_any {
+            fp.filtered_indices = None;
+            fp.page = 0;
+            return;
+        }
+
+        let path_str = fp.file_path.to_string();
+        let cfg = Config::new(Some(&path_str));
+        let mut out: Vec<u64> = Vec::new();
+
+        // Try fast byte-indexed path
+        if let Ok(Some(mut idx)) = cfg.indexed() {
+            // Prepare ActiveBytes using byte-normalized sets
+            let mut active_b: Vec<ActiveBytes> = Vec::new();
+            active_b.reserve(fp.filters.len());
+            for (i, f) in fp.filters.iter().enumerate() {
+                if f.selected.is_empty() && !f.use_regex {
+                    continue;
+                }
+                let set = if !f.selected.is_empty() {
+                    Some(Self::selected_set_bytes(&f.selected, f.case_insensitive))
+                } else {
+                    None
+                };
+                let rx = if f.use_regex {
+                    f.compiled_regex.clone()
+                } else {
+                    None
+                };
+                active_b.push(ActiveBytes {
+                    col: i,
+                    set,
+                    casei: f.case_insensitive,
+                    regex: rx,
+                });
+            }
+
+            if active_b.is_empty() {
+                fp.filtered_indices = None;
+                fp.page = 0;
+                return;
+            }
+
+            // Scan using byte records; do membership checks on &[u8] to avoid String allocations.
+            let mut scratch: Vec<u8> = Vec::new();
+            for (ri, rec_res) in idx.byte_records().enumerate() {
+                let Ok(brec) = rec_res else { continue };
+                let mut keep = true;
+                for af in active_b.iter() {
+                    let val_bytes = brec.get(af.col).unwrap_or(&[]);
+
+                    // Set membership (bytes)
+                    if let Some(set) = af.set.as_ref() {
+                        let matched = if af.casei {
+                            let lowered = Self::lower_ascii_into(&mut scratch, val_bytes);
+                            set.contains::<[u8]>(lowered)
+                        } else {
+                            set.contains::<[u8]>(val_bytes)
+                        };
+                        if !matched {
+                            keep = false;
+                            break;
+                        }
+                    }
+
+                    // Regex (needs &str); only run if still keeping
+                    if keep {
+                        if let Some(rx) = af.regex.as_ref() {
+                            let v: std::borrow::Cow<'_, str> = match std::str::from_utf8(val_bytes)
+                            {
+                                Ok(s) => std::borrow::Cow::Borrowed(s),
+                                Err(_) => std::borrow::Cow::Owned(
+                                    String::from_utf8_lossy(val_bytes).into_owned(),
+                                ),
+                            };
+                            if !rx.is_match(&v) {
+                                keep = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if keep {
+                    out.push(ri as u64);
+                }
+            }
+
+            fp.filtered_indices = Some(out);
+            fp.page = 0;
+            return;
+        }
+
+        // Fallback: stream with CSV reader (string records).
+        // Keep the existing normalization logic for correctness (Unicode-aware via util::norm).
         let mut active: Vec<(usize, HashSet<String>, bool /*casei*/, Option<Regex>)> = Vec::new();
         for (i, f) in fp.filters.iter().enumerate() {
+            if f.selected.is_empty() && !f.use_regex {
+                continue;
+            }
             let casei = f.case_insensitive;
             let set: HashSet<String> = if !f.selected.is_empty() {
                 f.selected
                     .iter()
-                    .map(|v| util::norm(v, casei).to_string())
+                    .map(|v| crate::util::norm(v, casei).to_string())
                     .collect()
             } else {
                 HashSet::new()
@@ -1450,9 +1586,7 @@ impl DataTableArea {
                 None
             };
 
-            if !set.is_empty() || rx.is_some() {
-                active.push((i, set, casei, rx));
-            }
+            active.push((i, set, casei, rx));
         }
 
         if active.is_empty() {
@@ -1461,41 +1595,7 @@ impl DataTableArea {
             return;
         }
 
-        let path_str = fp.file_path.to_string();
-        let cfg = Config::new(Some(&path_str));
-        let mut out: Vec<u64> = Vec::new();
-
-        if let Ok(Some(mut idx)) = cfg.indexed() {
-            for (ri, rec_res) in idx.byte_records().enumerate() {
-                if let Ok(brec) = rec_res {
-                    let mut keep = true;
-                    for (col, set, casei, rx) in active.iter() {
-                        let val_cow: Cow<'_, str> = brec
-                            .get(*col)
-                            .map(|b| String::from_utf8_lossy(b))
-                            .unwrap_or(Cow::Borrowed(""));
-                        // If there are selected values, enforce membership
-                        if !set.is_empty() {
-                            let key = util::norm(val_cow.as_ref(), *casei);
-                            if !set.contains(key.as_ref()) {
-                                keep = false;
-                                break;
-                            }
-                        }
-                        // If a regex is active, enforce regex match (on original value)
-                        if let Some(r) = rx.as_ref() {
-                            if !r.is_match(val_cow.as_ref()) {
-                                keep = false;
-                                break;
-                            }
-                        }
-                    }
-                    if keep {
-                        out.push(ri as u64);
-                    }
-                }
-            }
-        } else if let Ok(mut rdr) = cfg.reader() {
+        if let Ok(mut rdr) = cfg.reader() {
             for (ri, rec_res) in rdr.records().enumerate() {
                 if let Ok(rec) = rec_res {
                     let mut keep = true;
@@ -1503,7 +1603,7 @@ impl DataTableArea {
                         let val = rec.get(*col).unwrap_or("");
                         // If there are selected values, enforce membership
                         if !set.is_empty() {
-                            let key = util::norm(val, *casei);
+                            let key = crate::util::norm(val, *casei);
                             if !set.contains(key.as_ref()) {
                                 keep = false;
                                 break;
@@ -1522,9 +1622,8 @@ impl DataTableArea {
                     }
                 }
             }
+            fp.filtered_indices = Some(out);
+            fp.page = 0;
         }
-
-        fp.filtered_indices = Some(out);
-        fp.page = 0;
     }
 }
