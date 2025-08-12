@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use bon::Builder;
 use csv::Writer;
 use csvs_convert::{
-    Options, csvs_to_ods_with_options, csvs_to_parquet_with_options, csvs_to_xlsx_with_options,
+    csvs_to_ods_with_options, csvs_to_parquet_with_options, csvs_to_xlsx_with_options, Options,
 };
 use eframe::egui::{
     self, Align, Button, DragValue, Frame, Layout, Popup, PopupCloseBehavior, RectAlign, RichText,
@@ -18,7 +18,7 @@ use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use ustr::{Ustr, ustr};
+use ustr::{ustr, Ustr};
 
 use crate::util;
 
@@ -422,7 +422,7 @@ impl DataTableArea {
                 let total = util::count_rows_for_path(&path_str);
                 fp.total_rows = Some(total);
                 new_total_rows = Some(total as usize); // update self after dropping fp
-                // Clamp page within new total
+                                                       // Clamp page within new total
                 let total_pages =
                     ((total as usize).saturating_add(rows_per_page - 1)) / rows_per_page;
                 if total_pages == 0 {
@@ -544,7 +544,7 @@ impl DataTableArea {
                         let total = util::count_rows_for_path(&path_str);
                         fp.total_rows = Some(total);
                         new_total_rows = Some(total as usize); // update self after dropping fp
-                        // Clamp page within new total
+                                                               // Clamp page within new total
                         let total_pages =
                             ((total as usize).saturating_add(rows_per_page - 1)) / rows_per_page;
                         if total_pages == 0 {
