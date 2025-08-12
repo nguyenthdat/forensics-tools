@@ -100,6 +100,7 @@ pub struct FilePreview {
     pub total_rows: Option<u64>,
     pub load_error: Option<Ustr>,
     pub filtered_indices: Option<Vec<u64>>,
+    pub sorted_indices: Option<Vec<u64>>,
 }
 
 #[derive(Debug, Clone, Builder)]
@@ -188,221 +189,187 @@ impl DataTableArea {
                     let table = tbl.header(22.0, |mut header| {
                         for (ci, h) in headers.iter().enumerate() {
                             header.col(|ui| {
-                                ui.horizontal(|ui| {
-                                    // label (leave room for filter button)
-                                    let avail = ui.available_width().max(0.0);
-                                    let header_label = egui::Label::new(
-                                        RichText::new(h.as_str())
-                                            .strong()
-                                            .size(12.0)
-                                            .color(Color32::WHITE),
-                                    )
-                                    .truncate();
-                                    ui.add_sized(
-                                        egui::vec2((avail - 24.0).max(0.0), 20.0),
-                                        header_label,
-                                    );
+                                // Allocate a single row area and split into: [label        |   controls]
+                                let avail = ui.available_width().max(0.0);
+                                let controls_w = 100.0; // reserve space so Filter + ▲▼ are not clipped
+                                let label_w = (avail - controls_w).max(0.0);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(avail, 20.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        // --- Left: header label (clipped/truncated)
+                                        let header_label = egui::Label::new(
+                                            RichText::new(h.as_str())
+                                                .strong()
+                                                .size(12.0)
+                                                .color(Color32::WHITE),
+                                        )
+                                        .truncate();
+                                        ui.add_sized(egui::vec2(label_w, 20.0), header_label);
 
-                                    // sort buttons (Excel-like)
-                                    let is_active_sort = self.sort_col == Some(ci);
-                                    let asc_text = if is_active_sort && !self.sort_desc {
-                                        RichText::new("▲")
-                                            .strong()
-                                            .size(12.0)
-                                            .color(Color32::from_rgb(0, 200, 120))
-                                    } else {
-                                        RichText::new("▲").size(12.0).color(Color32::from_gray(230))
-                                    };
-                                    let desc_text = if is_active_sort && self.sort_desc {
-                                        RichText::new("▼")
-                                            .strong()
-                                            .size(12.0)
-                                            .color(Color32::from_rgb(0, 200, 120))
-                                    } else {
-                                        RichText::new("▼").size(12.0).color(Color32::from_gray(230))
-                                    };
-                                    if ui
-                                        .add(Button::new(asc_text))
-                                        .on_hover_text("Sort ascending")
-                                        .clicked()
-                                    {
-                                        self.on_sort_click(ci, false);
-                                    }
-                                    if ui
-                                        .add(Button::new(desc_text))
-                                        .on_hover_text("Sort descending")
-                                        .clicked()
-                                    {
-                                        self.on_sort_click(ci, true);
-                                    }
-                                    ui.add_space(2.0);
+                                        // --- Right: controls (Filter ▾ button + ▲ ▼ sort buttons)
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            // Filter button (keep text; constrain min width so it stays visible)
+                                            let active = self
+                                                .current_fp()
+                                                .and_then(|fp| fp.filters.get(ci))
+                                                .map(|f| !f.selected.is_empty())
+                                                .unwrap_or(false);
+                                            let btn_text = RichText::new("Filter").size(12.0).color(if active {
+                                                Color32::from_rgb(0, 200, 120)
+                                            } else {
+                                                Color32::from_gray(230)
+                                            });
+                                            let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
+                                            let btn_resp = ui.add_sized(
+                                                egui::vec2(66.0, 18.0),
+                                                Button::new(btn_text)
+                                            );
+                                            if btn_resp.clicked() {
+                                                Popup::toggle_id(ui.ctx(), popup_id);
+                                            }
 
-                                    // filter dropdown button (menu_button replacement)
-                                    let mut apply_now = false;
-                                    let mut clear_now = false;
+                                            // Sort buttons (vector triangles so we don't depend on font glyphs)
+                                            let is_active_sort = self.sort_col == Some(ci);
+                                            let desc_resp = util::sort_triangle_button(ui, false, is_active_sort && self.sort_desc)
+                                                .on_hover_text("Sort descending");
+                                            if desc_resp.clicked() {
+                                                self.on_sort_click(ci, true);
+                                            }
+                                            let asc_resp = util::sort_triangle_button(ui, true, is_active_sort && !self.sort_desc)
+                                                .on_hover_text("Sort ascending");
+                                            if asc_resp.clicked() {
+                                                self.on_sort_click(ci, false);
+                                            }
 
-                                    let active = self
-                                        .current_fp()
-                                        .and_then(|fp| fp.filters.get(ci))
-                                        .map(|f| !f.selected.is_empty())
-                                        .unwrap_or(false);
+                                            // Keep a bit of breathing room from the label
+                                            ui.add_space(2.0);
 
-                                    let btn_text =
-                                        RichText::new("Filter ▾").size(12.0).color(if active {
-                                            Color32::from_rgb(0, 200, 120)
-                                        } else {
-                                            Color32::from_gray(230)
-                                        });
-                                    let popup_id = ui.make_persistent_id(("col_filter_popup", ci));
-                                    let btn_resp = ui.add(Button::new(btn_text));
-                                    if btn_resp.clicked() {
-                                        Popup::toggle_id(ui.ctx(), popup_id);
-                                    }
+                                            // Filter popup anchored to `btn_resp`
+                                            let mut apply_now = false;
+                                            let mut clear_now = false;
+                                            Popup::from_response(&btn_resp)
+                                                .layout(Layout::top_down_justified(Align::LEFT))
+                                                .open_memory(None)
+                                                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                                                .id(popup_id)
+                                                .align(RectAlign::BOTTOM_START)
+                                                .width(btn_resp.rect.width())
+                                                .show(|ui: &mut Ui| {
+                                                    ui.set_min_width(ui.available_width());
+                                                    self.ensure_distinct_for_col(ci);
+                                                    if let Some(fp) = self.current_fp_mut() {
+                                                        let f = &mut fp.filters[ci];
 
-                                    Popup::from_response(&btn_resp)
-                                        .layout(Layout::top_down_justified(Align::LEFT))
-                                        .open_memory(None)
-                                        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                                        .id(popup_id)
-                                        .align(RectAlign::BOTTOM_START)
-                                        .width(btn_resp.rect.width())
-                                        .show(|ui: &mut Ui| {
-                                            ui.set_min_width(ui.available_width());
-                                            self.ensure_distinct_for_col(ci);
-                                            if let Some(fp) = self.current_fp_mut() {
-                                                let f = &mut fp.filters[ci];
-
-                                                // (Top toggles removed — only bottom ones remain.)
-                                                if f.use_regex {
-                                                    let mut rbuf = f.regex_text.to_string();
-                                                    let edited = ui
-                                                        .add(
-                                                            TextEdit::singleline(&mut rbuf)
-                                                                .hint_text(
-                                                                "Regex pattern (e.g. ^foo.*bar$)",
-                                                            ),
-                                                        )
-                                                        .changed();
-                                                    if edited {
-                                                        f.regex_text = ustr(&rbuf);
-                                                        f.rebuild_regex();
-                                                        if f.regex_error.is_none() {
-                                                            apply_now = true;
-                                                        }
-                                                    }
-                                                    if let Some(err) = &f.regex_error {
-                                                        ui.label(
-                                                            RichText::new(format!(
-                                                                "⚠ Invalid regex: {}",
-                                                                err
-                                                            ))
-                                                            .color(Color32::from_rgb(220, 90, 90))
-                                                            .size(11.0),
-                                                        );
-                                                    }
-                                                    ui.add_space(4.0);
-                                                }
-
-                                                let mut buf = f.search.to_string();
-                                                if ui
-                                                    .add(
-                                                        TextEdit::singleline(&mut buf)
-                                                            .hint_text("Search values..."),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    f.search = ustr(&buf);
-                                                }
-                                                ui.add_space(4.0);
-
-                                                let values_slice: &[Ustr] = f
-                                                    .distinct_cache
-                                                    .as_ref()
-                                                    .map(|v| v.as_slice())
-                                                    .unwrap_or(&[]);
-                                                let search_lower =
-                                                    f.search.as_str().to_ascii_lowercase();
-
-                                                let mut selected_set: std::collections::HashSet<
-                                                    Ustr,
-                                                > = f.selected.iter().cloned().collect();
-                                                egui::ScrollArea::vertical()
-                                                    .max_height(180.0)
-                                                    .show(ui, |ui| {
-                                                        for val in values_slice.iter() {
-                                                            if !search_lower.is_empty()
-                                                                && !val
-                                                                    .as_str()
-                                                                    .to_ascii_lowercase()
-                                                                    .contains(&search_lower)
-                                                            {
-                                                                continue;
-                                                            }
-
-                                                            let mut checked =
-                                                                selected_set.contains(val);
-                                                            if ui
-                                                                .checkbox(
-                                                                    &mut checked,
-                                                                    val.as_str(),
+                                                        if f.use_regex {
+                                                            let mut rbuf = f.regex_text.to_string();
+                                                            let edited = ui
+                                                                .add(
+                                                                    TextEdit::singleline(&mut rbuf)
+                                                                        .hint_text("Regex pattern (e.g. ^foo.*bar$)"),
                                                                 )
-                                                                .clicked()
+                                                                .changed();
+                                                            if edited {
+                                                                f.regex_text = ustr(&rbuf);
+                                                                f.rebuild_regex();
+                                                                if f.regex_error.is_none() {
+                                                                    apply_now = true;
+                                                                }
+                                                            }
+                                                            if let Some(err) = &f.regex_error {
+                                                                ui.label(
+                                                                    RichText::new(format!("⚠ Invalid regex: {}", err))
+                                                                        .color(Color32::from_rgb(220, 90, 90))
+                                                                        .size(11.0),
+                                                                );
+                                                            }
+                                                            ui.add_space(4.0);
+                                                        }
+
+                                                        let mut buf = f.search.to_string();
+                                                        if ui
+                                                            .add(TextEdit::singleline(&mut buf).hint_text("Search values..."))
+                                                            .changed()
+                                                        {
+                                                            f.search = ustr(&buf);
+                                                        }
+                                                        ui.add_space(4.0);
+
+                                                        let values_slice: &[Ustr] = f
+                                                            .distinct_cache
+                                                            .as_ref()
+                                                            .map(|v| v.as_slice())
+                                                            .unwrap_or(&[]);
+                                                        let search_lower = f.search.as_str().to_ascii_lowercase();
+
+                                                        let mut selected_set: std::collections::HashSet<Ustr> =
+                                                            f.selected.iter().cloned().collect();
+                                                        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                                            for val in values_slice.iter() {
+                                                                if !search_lower.is_empty()
+                                                                    && !val.as_str().to_ascii_lowercase().contains(&search_lower)
+                                                                {
+                                                                    continue;
+                                                                }
+
+                                                                let mut checked = selected_set.contains(val);
+                                                                if ui.checkbox(&mut checked, val.as_str()).clicked() {
+                                                                    if checked {
+                                                                        selected_set.insert(val.clone());
+                                                                    } else {
+                                                                        selected_set.remove(val);
+                                                                    }
+                                                                    apply_now = true;
+                                                                }
+                                                            }
+                                                        });
+                                                        f.selected = selected_set.into_iter().collect();
+
+                                                        ui.separator();
+                                                        ui.horizontal(|ui| {
+                                                            if ui
+                                                                .checkbox(&mut f.case_insensitive, "Aa")
+                                                                .on_hover_text("Case-insensitive")
+                                                                .changed()
                                                             {
-                                                                if checked {
-                                                                    selected_set
-                                                                        .insert(val.clone());
-                                                                } else {
-                                                                    selected_set.remove(val);
+                                                                f.rebuild_regex();
+                                                                apply_now = true;
+                                                            }
+                                                            if ui
+                                                                .checkbox(&mut f.use_regex, ".*")
+                                                                .on_hover_text("Use regex")
+                                                                .changed()
+                                                            {
+                                                                f.rebuild_regex();
+                                                                apply_now = true;
+                                                            }
+                                                            ui.add_space(8.0);
+
+                                                            if ui.button("Select all").clicked() {
+                                                                if let Some(all) = &f.distinct_cache {
+                                                                    f.selected = all.clone();
                                                                 }
                                                                 apply_now = true;
                                                             }
-                                                        }
-                                                    });
-                                                f.selected = selected_set.into_iter().collect();
-
-                                                ui.separator();
-                                                ui.horizontal(|ui| {
-                                                    if ui
-                                                        .checkbox(&mut f.case_insensitive, "Aa")
-                                                        .on_hover_text("Case-insensitive")
-                                                        .changed()
-                                                    {
-                                                        f.rebuild_regex();
-                                                        apply_now = true;
-                                                    }
-                                                    if ui
-                                                        .checkbox(&mut f.use_regex, ".*")
-                                                        .on_hover_text("Use regex")
-                                                        .changed()
-                                                    {
-                                                        f.rebuild_regex();
-                                                        apply_now = true;
-                                                    }
-                                                    ui.add_space(8.0);
-
-                                                    if ui.button("Select all").clicked() {
-                                                        if let Some(all) = &f.distinct_cache {
-                                                            f.selected = all.clone();
-                                                        }
-                                                        apply_now = true;
-                                                    }
-                                                    if ui.button("Clear").clicked() {
-                                                        f.selected.clear();
-                                                        clear_now = true;
-                                                    }
-                                                    if ui.button("Apply").clicked() {
-                                                        apply_now = true;
+                                                            if ui.button("Clear").clicked() {
+                                                                f.selected.clear();
+                                                                clear_now = true;
+                                                            }
+                                                            if ui.button("Apply").clicked() {
+                                                                apply_now = true;
+                                                            }
+                                                        });
                                                     }
                                                 });
+
+                                            if apply_now || clear_now {
+                                                self.apply_filters_for_current_file();
+                                                self.reload_current_preview_page();
+                                                self.pending_reload = false;
                                             }
                                         });
-
-                                    if apply_now || clear_now {
-                                        self.apply_filters_for_current_file();
-                                        self.reload_current_preview_page();
-                                        self.pending_reload = false;
-                                    }
-                                });
+                                    },
+                                );
                             });
                         }
                     });
@@ -487,8 +454,34 @@ impl DataTableArea {
                 new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
             }
 
-            if let Some(ref filt) = fp.filtered_indices {
-                let total = filt.len();
+            // Compose effective indices from overlay sort and filters (if any).
+            let composed: Option<Vec<u64>>;
+            let eff_slice: Option<&[u64]>;
+            match (fp.sorted_indices.as_ref(), fp.filtered_indices.as_ref()) {
+                (Some(sort), Some(filt)) => {
+                    let set: std::collections::HashSet<u64> = filt.iter().copied().collect();
+                    let mut v: Vec<u64> = Vec::with_capacity(filt.len());
+                    for &i in sort.iter() {
+                        if set.contains(&i) {
+                            v.push(i);
+                        }
+                    }
+                    composed = Some(v);
+                    eff_slice = composed.as_ref().map(|v| v.as_slice());
+                }
+                (Some(sort), None) => {
+                    eff_slice = Some(sort.as_slice());
+                }
+                (None, Some(filt)) => {
+                    eff_slice = Some(filt.as_slice());
+                }
+                (None, None) => {
+                    eff_slice = None;
+                }
+            }
+
+            if let Some(slice_all) = eff_slice {
+                let total = slice_all.len();
                 new_total_rows = Some(total);
                 let total_pages = if rows_per_page == 0 {
                     0
@@ -503,10 +496,10 @@ impl DataTableArea {
 
                 let start_idx = new_page.saturating_mul(rows_per_page);
                 let end_idx = (start_idx + rows_per_page).min(total);
-                let slice = &filt[start_idx..end_idx];
+                let slice = &slice_all[start_idx..end_idx];
 
                 // seek in contiguous chunks to minimize random seeks
-                let mut i = 0;
+                let mut i = 0usize;
                 while i < slice.len() {
                     let base = slice[i];
                     let mut len = 1usize;
@@ -533,6 +526,7 @@ impl DataTableArea {
                     i += len;
                 }
             } else {
+                // Unsorted & unfiltered fast page-seek
                 let start = new_page.saturating_mul(rows_per_page);
                 if let Err(e) = idx.seek(start as u64) {
                     fp.load_error = Some(ustr(&format!("Index seek error: {e}")));
@@ -582,8 +576,35 @@ impl DataTableArea {
                         new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
                     }
 
-                    if let Some(ref filt) = fp.filtered_indices {
-                        let total = filt.len();
+                    // Compose effective indices from overlay sort and filters (if any).
+                    let composed: Option<Vec<u64>>;
+                    let eff_slice: Option<&[u64]>;
+                    match (fp.sorted_indices.as_ref(), fp.filtered_indices.as_ref()) {
+                        (Some(sort), Some(filt)) => {
+                            let set: std::collections::HashSet<u64> =
+                                filt.iter().copied().collect();
+                            let mut v: Vec<u64> = Vec::with_capacity(filt.len());
+                            for &i in sort.iter() {
+                                if set.contains(&i) {
+                                    v.push(i);
+                                }
+                            }
+                            composed = Some(v);
+                            eff_slice = composed.as_ref().map(|v| v.as_slice());
+                        }
+                        (Some(sort), None) => {
+                            eff_slice = Some(sort.as_slice());
+                        }
+                        (None, Some(filt)) => {
+                            eff_slice = Some(filt.as_slice());
+                        }
+                        (None, None) => {
+                            eff_slice = None;
+                        }
+                    }
+
+                    if let Some(slice_all) = eff_slice {
+                        let total = slice_all.len();
                         new_total_rows = Some(total);
                         let total_pages = if rows_per_page == 0 {
                             0
@@ -598,7 +619,7 @@ impl DataTableArea {
 
                         let start_idx = new_page.saturating_mul(rows_per_page);
                         let end_idx = (start_idx + rows_per_page).min(total);
-                        let mut wanted_iter = filt[start_idx..end_idx].iter().copied();
+                        let mut wanted_iter = slice_all[start_idx..end_idx].iter().copied();
                         let mut next = wanted_iter.next();
 
                         for (ri, rec_res) in rdr.records().enumerate() {
@@ -624,6 +645,7 @@ impl DataTableArea {
                             }
                         }
                     } else {
+                        // Unsorted & unfiltered: simple skip/take
                         let start = new_page.saturating_mul(rows_per_page);
                         for rec_res in rdr.records().skip(start).take(rows_per_page) {
                             match rec_res {
@@ -697,6 +719,7 @@ impl DataTableArea {
             total_rows: None,
             load_error: None,
             filtered_indices: None,
+            sorted_indices: None,
         };
 
         // Count first so we can clamp paging appropriately (byte_records for speed)
@@ -1683,7 +1706,7 @@ impl DataTableArea {
                         let val = rec.get(*col).unwrap_or("");
                         // If there are selected values, enforce membership
                         if !set.is_empty() {
-                            let key = crate::util::norm(val, *casei);
+                            let key = util::norm(val, *casei);
                             if !set.contains(key.as_ref()) {
                                 keep = false;
                                 break;
@@ -1730,37 +1753,23 @@ impl DataTableArea {
         };
         let input_path = fp_snapshot.file_path.to_string();
 
-        // Create a persistent temp destination for the sorted CSV
         let tmp_dir = std::env::temp_dir();
-        let tmp_file = tempfile::Builder::new()
-            .prefix("waka_sorted_")
-            .suffix(".csv")
-            .tempfile_in(&tmp_dir)?;
-        let tmppath = tmp_file.into_temp_path();
-        let kept_path = tmppath.keep()?;
-
-        // Call into qsv's library external sorter
-        util::external_sort_csv_by_columns(
+        let indices = util::external_sort_row_indices_by_columns(
             &input_path,
-            &kept_path,
             &[col],
             descending,
-            None, // use default delimiter
+            None, // default delimiter
             tmp_dir.to_string_lossy().as_ref(),
-            None,  // default memory limit heuristic
-            None,  // let qsv decide threads
-            false, // we assume headers are present and should be kept at top
-        )
-        .map_err(|e| anyhow!(format!("{e}")))?;
+            None,  // memory limit heuristic
+            None,  // threads
+            false, // assume headers present
+        )?;
 
-        // Replace current file path with the sorted result, preserve filters by clearing indices
         if let Some(fp) = self.current_fp_mut() {
-            fp.file_path = ustr(&kept_path.to_string_lossy());
-            fp.headers.clear(); // force re-read headers from new file
-            fp.filtered_indices = None; // reset filter hits; filters UI selections remain
+            fp.sorted_indices = Some(indices);
             fp.page = 0;
             fp.load_error = None;
-            fp.total_rows = None; // force recount
+            // don't touch file_path/headers/filters
         }
         Ok(())
     }
