@@ -1,6 +1,7 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use ahash::AHashSet;
 use anyhow::anyhow;
 use bon::Builder;
 use csv::Writer;
@@ -14,6 +15,7 @@ use eframe::egui::{
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
 use qsv::config::Config;
+use rayon::prelude::*;
 use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
@@ -1154,7 +1156,7 @@ impl DataTableArea {
 
     fn default_export_filename(&self, ext: &str) -> String {
         if let Some(fp) = self.current_fp() {
-            let base = crate::util::display_name(&fp.file_path);
+            let base = util::display_name(&fp.file_path);
             format!("{}_filtered.{}", base, ext)
         } else {
             format!("export_filtered.{}", ext)
@@ -1425,14 +1427,12 @@ impl DataTableArea {
 
     // --- Performance helpers for filtering on large files ---
     #[inline]
-    fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> HashSet<Vec<u8>> {
-        let mut set = HashSet::with_capacity(selected.len());
+    fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> AHashSet<Vec<u8>> {
+        let mut set: AHashSet<Vec<u8>> = AHashSet::with_capacity(selected.len());
         for v in selected {
             let mut bytes = v.as_str().as_bytes().to_vec();
             if case_insensitive {
-                for b in &mut bytes {
-                    *b = b.to_ascii_lowercase();
-                }
+                bytes.make_ascii_lowercase(); // from bstr::ByteVec
             }
             set.insert(bytes);
         }
@@ -1442,10 +1442,8 @@ impl DataTableArea {
     #[inline]
     fn lower_ascii_into<'a>(buf: &'a mut Vec<u8>, src: &[u8]) -> &'a [u8] {
         buf.clear();
-        buf.reserve(src.len());
-        for &b in src {
-            buf.push(b.to_ascii_lowercase());
-        }
+        buf.extend_from_slice(src);
+        buf.make_ascii_lowercase();
         &buf[..]
     }
 
@@ -1462,7 +1460,7 @@ impl DataTableArea {
         // and one for string records (reader).
         struct ActiveBytes {
             col: usize,
-            set: Option<HashSet<Vec<u8>>>, // normalized per case-insensitive flag
+            set: Option<AHashSet<Vec<u8>>>,
             casei: bool,
             regex: Option<Regex>,
         }
@@ -1506,6 +1504,10 @@ impl DataTableArea {
                     casei: f.case_insensitive,
                     regex: rx,
                 });
+                active_b.sort_by_key(|af| {
+                    let sz = af.set.as_ref().map(|s| s.len()).unwrap_or(usize::MAX);
+                    (sz == usize::MAX, sz) // sets first; smaller first; regex-only last
+                });
             }
 
             if active_b.is_empty() {
@@ -1526,9 +1528,9 @@ impl DataTableArea {
                     if let Some(set) = af.set.as_ref() {
                         let matched = if af.casei {
                             let lowered = Self::lower_ascii_into(&mut scratch, val_bytes);
-                            set.contains::<[u8]>(lowered)
+                            set.contains(lowered)
                         } else {
-                            set.contains::<[u8]>(val_bytes)
+                            set.contains(val_bytes)
                         };
                         if !matched {
                             keep = false;
@@ -1564,29 +1566,40 @@ impl DataTableArea {
         }
 
         // Fallback: stream with CSV reader (string records).
-        // Keep the existing normalization logic for correctness (Unicode-aware via util::norm).
-        let mut active: Vec<(usize, HashSet<String>, bool /*casei*/, Option<Regex>)> = Vec::new();
+        // Keep Unicode-aware normalization via util::norm, but use AHashSet and rayon.
+        #[derive(Clone)]
+        struct ActiveStr {
+            col: usize,
+            set: AHashSet<String>,
+            casei: bool,
+            regex: Option<Regex>,
+        }
+
+        let mut active: Vec<ActiveStr> = Vec::new();
         for (i, f) in fp.filters.iter().enumerate() {
             if f.selected.is_empty() && !f.use_regex {
                 continue;
             }
             let casei = f.case_insensitive;
-            let set: HashSet<String> = if !f.selected.is_empty() {
+            let set: AHashSet<String> = if !f.selected.is_empty() {
                 f.selected
                     .iter()
                     .map(|v| crate::util::norm(v, casei).to_string())
                     .collect()
             } else {
-                HashSet::new()
+                AHashSet::new()
             };
-
             let rx = if f.use_regex {
                 f.compiled_regex.clone()
             } else {
                 None
             };
-
-            active.push((i, set, casei, rx));
+            active.push(ActiveStr {
+                col: i,
+                set,
+                casei,
+                regex: rx,
+            });
         }
 
         if active.is_empty() {
@@ -1595,34 +1608,51 @@ impl DataTableArea {
             return;
         }
 
-        if let Ok(mut rdr) = cfg.reader() {
-            for (ri, rec_res) in rdr.records().enumerate() {
-                if let Ok(rec) = rec_res {
+        // Order by selectivity: sets first (smaller first), regex-only last
+        active.sort_by_key(|af| {
+            let sz = if af.set.is_empty() {
+                usize::MAX
+            } else {
+                af.set.len()
+            };
+            (af.set.is_empty(), sz)
+        });
+
+        // Read & filter in parallel using par_bridge
+        if let Ok(rdr) = cfg.reader() {
+            let matches: Vec<u64> = rdr
+                .into_records()
+                .enumerate()
+                .par_bridge()
+                .filter_map(|(ri, rec_res)| {
+                    let rec = match rec_res {
+                        Ok(r) => r,
+                        Err(_) => return None,
+                    };
                     let mut keep = true;
-                    for (col, set, casei, rx) in active.iter() {
-                        let val = rec.get(*col).unwrap_or("");
-                        // If there are selected values, enforce membership
-                        if !set.is_empty() {
-                            let key = crate::util::norm(val, *casei);
-                            if !set.contains(key.as_ref()) {
+                    for af in active.iter() {
+                        let val = rec.get(af.col).unwrap_or("");
+                        if !af.set.is_empty() {
+                            let key = crate::util::norm(val, af.casei);
+                            if !af.set.contains(key.as_ref()) {
                                 keep = false;
                                 break;
                             }
                         }
-                        // If a regex is active, enforce regex match (on original value)
-                        if let Some(r) = rx {
-                            if !r.is_match(val) {
-                                keep = false;
-                                break;
+                        if keep {
+                            if let Some(r) = &af.regex {
+                                if !r.is_match(val) {
+                                    keep = false;
+                                    break;
+                                }
                             }
                         }
                     }
-                    if keep {
-                        out.push(ri as u64);
-                    }
-                }
-            }
-            fp.filtered_indices = Some(out);
+                    if keep { Some(ri as u64) } else { None }
+                })
+                .collect();
+
+            fp.filtered_indices = Some(matches);
             fp.page = 0;
         }
     }
