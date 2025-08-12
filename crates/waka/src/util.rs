@@ -35,6 +35,7 @@ pub fn norm<'a>(s: &'a str, casei: bool) -> std::borrow::Cow<'a, str> {
 /// Columns are 0-based indices into the CSV. Requires an index (same as CLI).
 /// If `no_headers` is false, the header row is preserved as the first line.
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 pub fn external_sort_csv_by_columns(
     input_path: &str,
     output_path: &Path,
@@ -210,6 +211,7 @@ pub fn external_sort_csv_by_columns(
 /// External sort that returns a sorted vector of 0-based row indices (data rows only),
 /// preserving Excel-like behavior (header stays at top when `no_headers` is false).
 /// Requires an existing qsv index (.idx) for `input_path`.
+#[allow(clippy::too_many_arguments)]
 pub fn external_sort_row_indices_by_columns(
     input_path: &str,
     columns: &[usize],
