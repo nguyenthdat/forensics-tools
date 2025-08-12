@@ -434,11 +434,11 @@ impl SqlEditor {
                 return;
             };
             (
-                fp.file_path.clone(),
+                fp.file_path,
                 fp.preview_rows.len(),
                 self.data_table.current_file,
                 self.data_table.files.len(),
-                fp.load_error.clone(),
+                fp.load_error,
                 fp.preview_rows.is_empty(),
             )
         };
