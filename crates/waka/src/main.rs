@@ -1,3 +1,38 @@
-fn main() {
-    println!("Hello, world!");
+use eframe::{
+    NativeOptions,
+    egui::{ViewportBuilder, Visuals},
+};
+
+mod app;
+mod config;
+mod util;
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const APP_TITLE: &str = "Waka Forensics Suite";
+const APP_ICON: &[u8] = include_bytes!("../../../assets/logo.png");
+
+fn main() -> eframe::Result<()> {
+    let native_options = NativeOptions {
+        viewport: ViewportBuilder::default()
+            .with_title(APP_TITLE)
+            .with_min_inner_size([800.0, 600.0])
+            .with_taskbar(true)
+            .with_inner_size([1200.0, 800.0])
+            .with_icon(eframe::icon_data::from_png_bytes(APP_ICON).unwrap_or_default()),
+        ..Default::default()
+    };
+
+    eframe::run_native(
+        APP_TITLE,
+        native_options,
+        Box::new(|cc| {
+            // Configure egui style here if needed
+            cc.egui_ctx.set_visuals(Visuals::dark());
+
+            Ok(Box::new(app::WakaApp::new()))
+        }),
+    )
 }

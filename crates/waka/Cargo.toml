@@ -8,3 +8,38 @@ homepage.workspace = true
 license.workspace = true
 
 [dependencies]
+qsv = { workspace = true, default-features = false, features = [
+    "distrib_features",
+    "polars",
+] }
+
+anyhow.workspace = true
+
+eframe = { workspace = true, features = ["persistence", "serde", "wgpu"] }
+epaint = { workspace = true, features = ["serde"] }
+
+polars-sql = { workspace = true, default-features = false }
+sqlparser = { workspace = true }
+
+syntect = { workspace = true }
+unicode-segmentation = { workspace = true }
+
+regex = { workspace = true }
+mimalloc = { workspace = true }
+
+tracing = { workspace = true, features = ["std", "log"] }
+tracing-subscriber = { workspace = true, features = [
+    "env-filter",
+    "fmt",
+    "std",
+    "tracing-log",
+] }
+ustr = { workspace = true, features = ["serde"] }
+serde_json.workspace = true
+serde = { workspace = true, features = ["derive"] }
+bon.workspace = true
+egui_extras.workspace = true
+rfd.workspace = true
+tempfile.workspace = true
+csv.workspace = true
+csvs_convert = { workspace = true, features = ["converters", "parquet"] }
