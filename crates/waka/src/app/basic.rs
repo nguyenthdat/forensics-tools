@@ -8,7 +8,7 @@ use crate::app::table::DataTableArea;
 
 #[derive(Debug, Clone, Builder)]
 pub struct BasicEditor {
-    data_table: DataTableArea,
+    pub data_table: DataTableArea,
 }
 
 impl BasicEditor {
