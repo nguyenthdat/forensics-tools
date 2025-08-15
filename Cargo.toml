@@ -64,6 +64,14 @@ sysinfo = "0.37.0"
 libc = "0.2.175"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+crossbeam-channel = "0.5.15"
+qsv-dateparser = "0.13.0"
+threadpool = "1.8.1"
+qsv-stats = "0.37.0"
+itoa = "1.0.15"
+sha256 = "1.6.0"
+fast-float2 = "0.2.3"
+atoi_simd = "0.16.1"
 
 env_logger = "0.11.8"
 simplelog = { version = "0.12" }
