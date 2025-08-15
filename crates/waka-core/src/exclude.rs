@@ -1,9 +1,9 @@
-use std::{collections::hash_map::Entry, fs, io, str};
+use std::{collections::hash_map::Entry, fs, io};
 
 use anyhow::anyhow;
+use bon::Builder;
 use byteorder::{BigEndian, WriteBytesExt};
 use foldhash::{HashMap, HashMapExt};
-use serde::Deserialize;
 
 use crate::{
     config::{Config, Delimiter},
@@ -13,27 +13,30 @@ use crate::{
     util::ByteString,
 };
 
-#[derive(Deserialize)]
-struct Args {
-    arg_columns1:     SelectColumns,
-    arg_input1:       String,
-    arg_columns2:     SelectColumns,
-    arg_input2:       String,
-    flag_v:           bool,
-    flag_output:      Option<String>,
-    flag_no_headers:  bool,
-    flag_ignore_case: bool,
-    flag_delimiter:   Option<Delimiter>,
+#[derive(Clone, Debug, Builder)]
+#[builder(derive(Clone, Debug, Into))]
+pub struct Args {
+    pub arg_columns1:     SelectColumns,
+    #[builder(into)]
+    pub arg_input1:       String,
+    pub arg_columns2:     SelectColumns,
+    #[builder(into)]
+    pub arg_input2:       String,
+    pub flag_v:           bool,
+    #[builder(into)]
+    pub flag_output:      Option<String>,
+    pub flag_no_headers:  bool,
+    pub flag_ignore_case: bool,
+    pub flag_delimiter:   Option<Delimiter>,
 }
 
-pub fn run(argv: &[&str]) -> anyhow::Result<()> {
-    let args: Args = util::get_args("", argv)?;
+pub fn run(args: Args) -> anyhow::Result<()> {
     let mut state = args.new_io_state()?;
     state.write_headers()?;
     state.exclude(args.flag_v)
 }
 
-struct IoState<R, W: io::Write> {
+pub struct IoState<R, W: io::Write> {
     wtr:        csv::Writer<W>,
     rdr1:       csv::Reader<R>,
     sel1:       Selection,
@@ -127,12 +130,11 @@ impl Args {
     }
 }
 
-#[allow(dead_code)]
-struct ValueIndex<R> {
+pub struct ValueIndex<R> {
     // This maps tuples of values to corresponding rows.
-    values:   HashMap<Vec<ByteString>, Vec<usize>>,
-    idx:      Indexed<R, io::Cursor<Vec<u8>>>,
-    num_rows: usize,
+    pub values:   HashMap<Vec<ByteString>, Vec<usize>>,
+    pub idx:      Indexed<R, io::Cursor<Vec<u8>>>,
+    pub num_rows: usize,
 }
 
 impl<R: io::Read + io::Seek> ValueIndex<R> {
