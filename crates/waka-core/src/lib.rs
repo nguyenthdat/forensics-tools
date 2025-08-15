@@ -1,7 +1,9 @@
 pub mod config;
 pub mod count;
+pub mod dedup;
 pub mod index;
 pub mod lookup;
 pub mod select;
+pub mod sort;
 pub mod stats;
 pub mod util;
