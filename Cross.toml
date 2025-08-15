@@ -1,1 +1,31 @@
+[build]
+# (optional) pass through env vars you might need (codesign, etc.)
+# [build.env]
+# passthrough = ["APPLE_CERT", "SOME_FLAG"]
 
+######## Linux (works with stock cross images) ########
+
+[target.x86_64-unknown-linux-gnu]
+# To target older glibc (e.g. CentOS 7), uncomment:
+# image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main-centos"
+
+[target.aarch64-unknown-linux-gnu]
+# For older glibc on arm64, uncomment:
+# image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main-centos"
+
+######## Windows x64 (GNU) — works out of the box ########
+
+[target.x86_64-pc-windows-gnu]
+
+######## Windows ARM64 (MSVC) — needs a custom image ########
+# Build the image once (see steps below), then point to its tag:
+
+[target.aarch64-pc-windows-msvc]
+image = "ghcr.io/cross-rs/aarch64-pc-windows-msvc-cross:local"
+
+######## macOS Apple Silicon — either build natively OR via custom image ########
+# On an M1/M2, you can just `cargo build --target aarch64-apple-darwin`.
+# If you want to run it through `cross`, build the Apple SDK image once (below).
+
+[target.aarch64-apple-darwin]
+image = "ghcr.io/cross-rs/aarch64-apple-darwin-cross:local"

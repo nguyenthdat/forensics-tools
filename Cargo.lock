@@ -11087,37 +11087,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "waka"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "atoi_simd",
- "bon",
- "csv",
- "csvs_convert",
- "eframe",
- "egui_extras",
- "epaint",
- "ext-sort",
- "mimalloc",
- "num_cpus",
- "polars-sql",
- "qsv",
- "regex",
- "rfd",
- "serde",
- "serde_json",
- "simdutf8",
- "sqlparser 0.58.0",
- "syntect",
- "tempfile",
- "tracing",
- "tracing-subscriber",
- "unicode-segmentation",
- "ustr",
-]
-
-[[package]]
 name = "waka-core"
 version = "0.0.1"
 dependencies = [
@@ -11167,6 +11136,37 @@ dependencies = [
  "tracing-log",
  "tracing-subscriber",
  "zip",
+]
+
+[[package]]
+name = "waka-gui"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "atoi_simd",
+ "bon",
+ "csv",
+ "csvs_convert",
+ "eframe",
+ "egui_extras",
+ "epaint",
+ "ext-sort",
+ "mimalloc",
+ "num_cpus",
+ "polars-sql",
+ "qsv",
+ "regex",
+ "rfd",
+ "serde",
+ "serde_json",
+ "simdutf8",
+ "sqlparser 0.58.0",
+ "syntect",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-segmentation",
+ "ustr",
 ]
 
 [[package]]

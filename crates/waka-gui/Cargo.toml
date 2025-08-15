@@ -1,11 +1,15 @@
 [package]
-name = "waka"
+name = "waka-gui"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 readme.workspace = true
 homepage.workspace = true
 license.workspace = true
+
+[[bin]]
+name = "gwaka"
+path = "src/main.rs"
 
 [dependencies]
 qsv = { workspace = true, default-features = false, features = [
@@ -45,5 +49,8 @@ csv.workspace = true
 csvs_convert = { workspace = true, features = ["converters", "parquet"] }
 ext-sort = { version = "0.1", default-features = false }
 atoi_simd = "0.16.1"
-simdutf8 = { version = "0.1.5", features = ["aarch64_neon", "aarch64_neon_prefetch"] }
+simdutf8 = { version = "0.1.5", features = [
+    "aarch64_neon",
+    "aarch64_neon_prefetch",
+] }
 num_cpus.workspace = true
