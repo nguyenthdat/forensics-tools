@@ -1,9 +1,14 @@
+use std::{
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use eframe::{egui, egui::Frame};
 use epaint::{CornerRadius, Margin};
 use polars_sql::keywords::{all_functions, all_keywords};
 use sqlparser::{ast::Statement, dialect::GenericDialect, parser::Parser};
 
-use crate::app::basic::BasicEditor;
+use crate::{app::basic::BasicEditor, util};
 
 pub struct SqlEditor {
     query:               String,
@@ -32,6 +37,65 @@ pub struct SqlEditor {
 }
 
 impl SqlEditor {
+    fn execute_query(&mut self) {
+        // Require at least one file to be present as a table
+        if self.basic_editor.data_table.files.is_empty() {
+            self.syntax_error = Some("Load at least one CSV file to query.".to_string());
+            self.show_result = false;
+            return;
+        }
+
+        let inputs: Vec<PathBuf> = self
+            .basic_editor
+            .data_table
+            .files
+            .iter()
+            .map(|fp| PathBuf::from(fp.file_path.as_str()))
+            .collect();
+
+        // Write result to a temp CSV and then preview it using the existing table UI
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let out_path = std::env::temp_dir().join(format!("qsv_sqlp_result_{}.csv", millis));
+
+        let lib_args = util::SqlpLibArgs {
+            inputs,
+            sql: self.query.clone(),
+            format: "csv".to_string(),
+            delimiter: b',',
+            try_parsedates: false,
+            infer_len: self.limit as usize,
+            cache_schema: false,
+            decimal_comma: false,
+            datetime_format: None,
+            date_format: None,
+            time_format: None,
+            float_precision: None,
+            compression: "zstd".to_string(),
+            compress_level: None,
+            statistics: false,
+            output_path: Some(out_path.clone()),
+            quiet: true,
+        };
+
+        match util::run_sqlp(lib_args) {
+            Ok(res) => {
+                self.execution_time = format!("{}ms", res.elapsed_ms);
+                self.row_count = res.rows;
+                self.show_result = true;
+                self.syntax_error = None;
+                // Load the produced CSV into the results table
+                self.basic_editor.data_table.load_preview(out_path);
+            },
+            Err(e) => {
+                self.show_result = false;
+                self.syntax_error = Some(format!("SQL execution failed: {}", e));
+            },
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             query:               "SELECT * FROM data\nLIMIT 1000".to_string(),
@@ -295,29 +359,36 @@ impl SqlEditor {
                     }
 
                     if response.changed() {
-                        self.update_suggestions();
+                        self.update_suggestions(ui);
                         self.validate_syntax();
                     }
 
                     // Handle keyboard input for suggestions
                     ui.input(|i| {
                         if self.show_suggestions && !self.suggestions.is_empty() {
-                            if i.key_pressed(egui::Key::Tab) {
-                                if let Some(suggestion) =
-                                    self.suggestions.get(self.selected_suggestion).cloned()
-                                {
-                                    self.apply_suggestion(&suggestion);
+                            let ctrl = i.modifiers.ctrl || i.modifiers.command; // Windows/Linux or macOS
+                            if ctrl && i.key_pressed(egui::Key::J) {
+                                if self.selected_suggestion + 1 < self.suggestions.len() {
+                                    self.selected_suggestion += 1;
                                 }
-                            } else if i.key_pressed(egui::Key::ArrowUp) {
+                            } else if ctrl && i.key_pressed(egui::Key::K) {
                                 if self.selected_suggestion > 0 {
                                     self.selected_suggestion -= 1;
                                 }
-                            } else if i.key_pressed(egui::Key::ArrowDown) {
-                                if self.selected_suggestion < self.suggestions.len() - 1 {
-                                    self.selected_suggestion += 1;
-                                }
                             } else if i.key_pressed(egui::Key::Escape) {
                                 self.show_suggestions = false;
+                            } else if ctrl && i.key_pressed(egui::Key::Enter) {
+                                if let Some(suggestion) =
+                                    self.suggestions.get(self.selected_suggestion).cloned()
+                                {
+                                    self.apply_suggestion_ui(&suggestion, ui);
+                                }
+                            }
+                        } else {
+                            // Show/toggle suggestions explicitly without typing
+                            let ctrl = i.modifiers.ctrl || i.modifiers.command;
+                            if ctrl && i.key_pressed(egui::Key::Space) {
+                                self.update_suggestions(ui);
                             }
                         }
                     });
@@ -784,9 +855,11 @@ impl SqlEditor {
                             ui.horizontal(|ui| {
                                 ui.label("💡");
                                 ui.label(
-                                    egui::RichText::new("Press Tab to accept")
-                                        .color(egui::Color32::from_rgb(170, 170, 170))
-                                        .size(10.0),
+                                    egui::RichText::new(
+                                        "Ctrl+Enter to accept  •  Ctrl+Space to toggle",
+                                    )
+                                    .color(egui::Color32::from_rgb(170, 170, 170))
+                                    .size(10.0),
                                 );
                             });
                         });
@@ -794,56 +867,101 @@ impl SqlEditor {
             });
 
         if let Some(suggestion) = clicked_suggestion {
-            self.apply_suggestion(&suggestion);
+            self.apply_suggestion_ui(&suggestion, ui);
         }
     }
 
-    fn update_suggestions(&mut self) {
-        self.current_word = self.get_current_word();
+    fn update_suggestions(&mut self, ui: &egui::Ui) {
+        let (prefix, _start, _end) = self.current_word_at_cursor(ui);
+        self.current_word = prefix.clone();
 
-        if self.current_word.len() >= 2 {
+        if self.current_word.len() >= 1 {
             self.suggestions = self.get_suggestions(&self.current_word);
             self.show_suggestions = !self.suggestions.is_empty();
             self.selected_suggestion = 0;
         } else {
             self.show_suggestions = false;
+            self.suggestions.clear();
         }
-    }
-
-    fn get_current_word(&self) -> String {
-        let words: Vec<&str> = self.query.split_whitespace().collect();
-        words.last().map_or("", |v| v).to_uppercase()
     }
 
     fn get_suggestions(&self, prefix: &str) -> Vec<String> {
         let mut suggestions = Vec::new();
-        let prefix_upper = prefix.to_uppercase();
+        let p = prefix.to_uppercase();
 
-        for keyword in &self.sql_keywords {
-            if keyword.starts_with(&prefix_upper) {
-                suggestions.push(keyword.to_string());
+        for &kw in &self.sql_keywords {
+            if kw.to_uppercase().starts_with(&p) {
+                suggestions.push(kw.to_string());
             }
         }
-
-        for function in &self.sql_functions {
-            if function.starts_with(&prefix_upper) {
-                suggestions.push(format!("{}()", function));
+        for &func in &self.sql_functions {
+            if func.to_uppercase().starts_with(&p) {
+                suggestions.push(format!("{}()", func));
             }
         }
 
         suggestions.sort();
+        suggestions.dedup();
         suggestions.truncate(8);
         suggestions
     }
 
-    fn apply_suggestion(&mut self, suggestion: &str) {
-        let words: Vec<&str> = self.query.split_whitespace().collect();
-        if !words.is_empty() {
-            let mut new_words = words[..words.len() - 1].to_vec();
-            new_words.push(suggestion);
-            self.query = new_words.join(" ") + " ";
-        } else {
-            self.query = format!("{} ", suggestion);
+    fn caret_index(&self, ui: &egui::Ui) -> Option<usize> {
+        let id = egui::Id::new("sql_editor");
+        if let Some(state) = egui::TextEdit::load_state(ui.ctx(), id) {
+            if let Some(cr) = state.cursor.char_range() {
+                return Some(cr.primary.index);
+            }
+        }
+        None
+    }
+
+    fn current_word_range_at(&self, idx: usize) -> (usize, usize) {
+        let bytes = self.query.as_bytes();
+        let len = bytes.len();
+        let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+
+        let mut s = idx.min(len);
+        while s > 0 && is_word(bytes[s - 1]) {
+            s -= 1;
+        }
+        let mut e = idx.min(len);
+        while e < len && is_word(bytes[e]) {
+            e += 1;
+        }
+        (s, e)
+    }
+
+    fn current_word_at_cursor(&self, ui: &egui::Ui) -> (String, usize, usize) {
+        if let Some(i) = self.caret_index(ui) {
+            let (s, e) = self.current_word_range_at(i);
+            return (self.query[s..e].to_string(), s, e);
+        }
+        // Fallback: end-of-text
+        let last = self
+            .query
+            .split_whitespace()
+            .last()
+            .unwrap_or("")
+            .to_string();
+        (
+            last.clone(),
+            self.query.len().saturating_sub(last.len()),
+            self.query.len(),
+        )
+    }
+
+    fn apply_suggestion_ui(&mut self, suggestion: &str, ui: &egui::Ui) {
+        let (_prefix, start, end) = self.current_word_at_cursor(ui);
+        if start <= end && end <= self.query.len() {
+            self.query.replace_range(start..end, suggestion);
+            // add a trailing space for keywords (heuristic: not a function call)
+            if !suggestion.ends_with(')') {
+                let insert_at = start + suggestion.len();
+                if insert_at <= self.query.len() {
+                    self.query.insert(insert_at, ' ');
+                }
+            }
         }
         self.show_suggestions = false;
         self.validate_syntax();
@@ -852,14 +970,5 @@ impl SqlEditor {
     fn parse_sql(&self, sql: &str) -> Result<Vec<Statement>, String> {
         let dialect = GenericDialect {};
         Parser::parse_sql(&dialect, sql).map_err(|e| e.to_string())
-    }
-
-    fn execute_query(&mut self) {
-        if let Some(error) = &self.syntax_error {
-            self.result = format!("❌ Cannot execute query with syntax error:\n{}", error);
-        } else {
-            self.result = format!("✅ Query executed successfully:\n{}", self.query);
-        }
-        self.show_result = true;
     }
 }

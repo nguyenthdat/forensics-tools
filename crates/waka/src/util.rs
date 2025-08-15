@@ -1,7 +1,8 @@
 use std::{
     collections::HashSet,
     io::{self, BufRead, Write},
-    path::Path,
+    path::{Path, PathBuf},
+    time::Instant,
 };
 
 use anyhow::anyhow;
@@ -9,9 +10,14 @@ use eframe::egui::{self, Ui};
 use epaint::{Color32, Shape, Stroke};
 use ext_sort::{ExternalSorter, ExternalSorterBuilder, LimitedBufferBuilder};
 use num_cpus;
+use polars_sql::SQLContext;
 use qsv::{
-    cmd::extdedup::calculate_memory_limit,
+    cmd::{
+        extdedup::calculate_memory_limit,
+        sqlp::{Args, OutputMode},
+    },
     config::{Config, Delimiter},
+    polars::{self, prelude::*},
 };
 use ustr::Ustr;
 
@@ -355,4 +361,143 @@ pub fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> HashSet<
         set.insert(bytes);
     }
     set
+}
+
+// ---- Library-friendly API for programmatic SQL queries ----
+#[derive(Clone)]
+pub struct SqlpLibArgs {
+    pub inputs:          Vec<PathBuf>,
+    pub sql:             String,
+    /// Output format: one of "csv", "json", "jsonl", "parquet", "arrow", "avro", or "none"
+    pub format:          String,
+    /// Field delimiter to use for CSV output (and for CSV input parsing)
+    pub delimiter:       u8,
+    pub try_parsedates:  bool,
+    pub infer_len:       usize,
+    pub cache_schema:    bool,
+    pub decimal_comma:   bool,
+    pub datetime_format: Option<String>,
+    pub date_format:     Option<String>,
+    pub time_format:     Option<String>,
+    pub float_precision: Option<usize>,
+    /// For parquet/arrow/avro outputs
+    pub compression:     String,
+    pub compress_level:  Option<i32>,
+    pub statistics:      bool,
+    /// If set, write the query result to this path; otherwise, write to stdout
+    pub output_path:     Option<PathBuf>,
+    /// Suppress returning the shape to stderr if true
+    pub quiet:           bool,
+}
+
+pub struct SqlpLibResult {
+    pub rows:        usize,
+    pub cols:        usize,
+    pub output_path: Option<PathBuf>,
+    pub elapsed_ms:  u128,
+}
+
+fn parse_output_mode(s: &str) -> OutputMode {
+    match s.to_ascii_lowercase().as_str() {
+        "json" => OutputMode::Json,
+        "jsonl" => OutputMode::Jsonl,
+        "parquet" => OutputMode::Parquet,
+        "arrow" => OutputMode::Arrow,
+        "avro" => OutputMode::Avro,
+        "none" => OutputMode::None,
+        _ => OutputMode::Csv,
+    }
+}
+
+/// Run a Polars SQL query programmatically using the same engine as `qsv sqlp`.
+/// This registers each input CSV as a table named by its file stem and also as `_t_N` aliases.
+/// Returns the result shape and optional output path and elapsed time.
+pub fn run_sqlp(lib_args: SqlpLibArgs) -> anyhow::Result<SqlpLibResult> {
+    use std::path::Path;
+
+    use polars::prelude::LazyFrame;
+
+    let start = Instant::now();
+
+    // Build SQL context and register inputs
+    let mut ctx = SQLContext::new();
+
+    for (i, path) in lib_args.inputs.iter().enumerate() {
+        let path_str = path.to_string_lossy().to_string();
+        let rdr = LazyCsvReader::new(PlPath::new(&path_str))
+            .with_has_header(true)
+            .with_infer_schema_length(Some(lib_args.infer_len))
+            .with_try_parse_dates(lib_args.try_parsedates)
+            .with_separator(lib_args.delimiter);
+
+        let lf: LazyFrame = rdr.finish()?;
+
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("data");
+
+        // Register under file stem
+        ctx.register(stem, lf.clone());
+        // Also register alias `_t_N` where N is 1-based index
+        let alias = format!("_t_{}", i + 1);
+        ctx.register(&alias, lf);
+    }
+
+    // If the SQL looks like a script path (ends with .sql and is a readable file), load it.
+    let sql_text: String = {
+        let trimmed = lib_args.sql.trim();
+        if trimmed.ends_with(".sql") {
+            let p = Path::new(trimmed);
+            if p.exists() {
+                std::fs::read_to_string(p)?
+            } else {
+                trimmed.to_string()
+            }
+        } else {
+            trimmed.to_string()
+        }
+    };
+
+    // Map to internal CLI Args so we can reuse OutputMode::execute_query
+    let cli_args = Args {
+        arg_input:                  lib_args.inputs.clone(),
+        arg_sql:                    sql_text.clone(),
+        flag_format:                lib_args.format.clone(),
+        flag_try_parsedates:        lib_args.try_parsedates,
+        flag_infer_len:             lib_args.infer_len,
+        flag_cache_schema:          lib_args.cache_schema,
+        flag_streaming:             false,
+        flag_low_memory:            false,
+        flag_no_optimizations:      false,
+        flag_ignore_errors:         false,
+        flag_truncate_ragged_lines: false,
+        flag_decimal_comma:         lib_args.decimal_comma,
+        flag_datetime_format:       lib_args.datetime_format.clone(),
+        flag_date_format:           lib_args.date_format.clone(),
+        flag_time_format:           lib_args.time_format.clone(),
+        flag_float_precision:       lib_args.float_precision,
+        // For CSV reading nulls, keep default behavior for now
+        flag_rnull_values:          "<empty string>".to_string(),
+        flag_wnull_value:           "<empty string>".to_string(),
+        flag_compression:           lib_args.compression.clone(),
+        flag_compress_level:        lib_args.compress_level,
+        flag_statistics:            lib_args.statistics,
+        flag_output:                lib_args
+            .output_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+        flag_delimiter:             None,
+        flag_quiet:                 lib_args.quiet,
+    };
+
+    let out_mode = parse_output_mode(&lib_args.format);
+
+    let (rows, cols) = out_mode
+        .execute_query(&sql_text, &mut ctx, lib_args.delimiter, cli_args)
+        .map_err(|e| anyhow!("Failed to execute SQL query: {e}"))?;
+
+    Ok(SqlpLibResult {
+        rows,
+        cols,
+        output_path: lib_args.output_path,
+        elapsed_ms: start.elapsed().as_millis(),
+    })
 }
