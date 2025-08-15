@@ -7,6 +7,7 @@ pub mod index;
 pub mod joinp;
 pub mod lookup;
 pub mod select;
+pub mod slice;
 pub mod snappy;
 pub mod sort;
 pub mod sqlp;
