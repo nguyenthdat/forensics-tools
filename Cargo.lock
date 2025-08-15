@@ -4864,10 +4864,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be1f93b8b1eb69c77f24bbb0afdf66f54b632ee39af40ca21c4365a1d7347e49"
 dependencies = [
  "jiff-static",
+ "jiff-tzdb-platform",
  "log",
  "portable-atomic",
  "portable-atomic-util",
  "serde",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4879,6 +4881,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.105",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1283705eb0a21404d2bfd6eef2a7593d240bc42a0bdb39db0ad6fa2ec026524"
+
+[[package]]
+name = "jiff-tzdb-platform"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "875a5a69ac2bab1a891711cf5eccbec1ce0341ea805560dcd90b7a2e925132e8"
+dependencies = [
+ "jiff-tzdb",
 ]
 
 [[package]]
@@ -10019,6 +10036,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "tantivy-derive"
+version = "0.3.0"
+source = "git+https://github.com/nguyenthdat/tantivy-derive.git#6c4b9fdbb4f876611dc9dd32ce49b70fc4a12216"
+dependencies = [
+ "bytes",
+ "chrono",
+ "jiff",
+ "rust_decimal",
+ "serde",
+ "tantivy",
+ "tantivy-derive-impl",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "tantivy-derive-impl"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2fd56d92f0d96a01ca689e3179924d85a047e71dc790e20dbc3dbbb6b42639b"
+dependencies = [
+ "darling 0.20.11",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.105",
+ "tantivy",
+]
+
+[[package]]
 name = "tantivy-fst"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11093,6 +11139,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "atoi_simd",
+ "bon",
  "chrono",
  "crossbeam-channel",
  "csv",
@@ -11135,6 +11182,9 @@ dependencies = [
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "sysinfo 0.37.0",
+ "tantivy",
+ "tantivy-derive",
+ "tantivy-query-grammar",
  "tempfile",
  "threadpool",
  "tracing",

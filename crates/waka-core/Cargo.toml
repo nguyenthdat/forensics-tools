@@ -52,15 +52,20 @@ itoa.workspace = true
 sha256.workspace = true
 fast-float2.workspace = true
 atoi_simd.workspace = true
+rand_hc.workspace = true
+strum_macros.workspace = true
+rand_xoshiro.workspace = true
+strum = { workspace = true, features = ["phf"] }
+arboard = { workspace = true, features = ["wayland-data-control"] }
+bon.workspace = true
+
 # QSV specific dependencies
 qsv-sniffer.workspace = true
 qsv-stats.workspace = true
 qsv-dateparser.workspace = true
 rand.workspace = true
 
-# new dependencies
-rand_hc = "0.4.0"
-strum_macros = "0.27.2"
-rand_xoshiro = "0.7.0"
-strum = { version = "0.27.2", features = ["phf"] }
-arboard = { version = "3.6.0", features = ["wayland-data-control"] }
+# Tantivy
+tantivy.workspace = true
+tantivy-query-grammar.workspace = true
+tantivy-derive.workspace = true

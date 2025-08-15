@@ -72,7 +72,11 @@ itoa = "1.0.15"
 sha256 = "1.6.0"
 fast-float2 = "0.2.3"
 atoi_simd = "0.16.1"
-
+rand_hc = "0.4.0"
+strum_macros = "0.27.2"
+rand_xoshiro = "0.7.0"
+strum = { version = "0.27.2", features = ["phf"] }
+arboard = { version = "3.6.0", features = ["wayland-data-control"] }
 env_logger = "0.11.8"
 simplelog = { version = "0.12" }
 tracing = { version = "0.1.41" }
