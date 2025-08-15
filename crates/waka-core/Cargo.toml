@@ -69,3 +69,7 @@ rand.workspace = true
 tantivy.workspace = true
 tantivy-query-grammar.workspace = true
 tantivy-derive.workspace = true
+byteorder.workspace = true
+url = "2.5.4"
+gzp = { version = "1", default-features = false, features = ["snappy_default"] }
+tokio = { workspace = true, features = ["full", "tracing"] }

@@ -11140,6 +11140,7 @@ dependencies = [
  "arboard",
  "atoi_simd",
  "bon",
+ "byteorder",
  "chrono",
  "crossbeam-channel",
  "csv",
@@ -11151,6 +11152,7 @@ dependencies = [
  "filetime",
  "foldhash",
  "futures-util",
+ "gzp",
  "itertools 0.14.0",
  "itoa",
  "libc",
@@ -11187,10 +11189,12 @@ dependencies = [
  "tantivy-query-grammar",
  "tempfile",
  "threadpool",
+ "tokio",
  "tracing",
  "tracing-appender",
  "tracing-log",
  "tracing-subscriber",
+ "url",
  "zip",
 ]
 
