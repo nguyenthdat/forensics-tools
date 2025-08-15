@@ -39,7 +39,7 @@ pub struct SqlEditor {
 impl SqlEditor {
     fn execute_query(&mut self) {
         // Require at least one file to be present as a table
-        if self.basic_editor.data_table.files.is_empty() {
+        if self.basic_editor.table.files.is_empty() {
             self.syntax_error = Some("Load at least one CSV file to query.".to_string());
             self.show_result = false;
             return;
@@ -47,7 +47,7 @@ impl SqlEditor {
 
         let inputs: Vec<PathBuf> = self
             .basic_editor
-            .data_table
+            .table
             .files
             .iter()
             .map(|fp| PathBuf::from(fp.file_path.as_str()))
@@ -87,7 +87,7 @@ impl SqlEditor {
                 self.show_result = true;
                 self.syntax_error = None;
                 // Load the produced CSV into the results table
-                self.basic_editor.data_table.load_preview(out_path);
+                self.basic_editor.table.load_preview(out_path);
             },
             Err(e) => {
                 self.show_result = false;
@@ -125,7 +125,7 @@ impl SqlEditor {
 
     pub fn show(&mut self, ui: &mut egui::Ui) {
         // Main container with VS Code dark theme
-        self.basic_editor.data_table.handle_file_drop(ui.ctx());
+        self.basic_editor.table.handle_file_drop(ui.ctx());
 
         Frame::new()
             .fill(egui::Color32::from_rgb(37, 37, 38)) // VS Code background

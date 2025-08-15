@@ -1,25 +1,23 @@
 use std::path::PathBuf;
 
-use bon::Builder;
 use eframe::egui::{self, ComboBox, Frame, Ui};
 use epaint::{Color32, CornerRadius, Margin, Stroke, StrokeKind};
 
-use crate::app::table::DataTableArea;
+use crate::app::table::TableEditor;
 
-#[derive(Debug, Clone, Builder)]
 pub struct BasicEditor {
-    pub data_table: DataTableArea,
+    pub table: TableEditor,
 }
 
 impl BasicEditor {
     pub fn new() -> Self {
         Self {
-            data_table: DataTableArea::default(),
+            table: TableEditor::default(),
         }
     }
 
     pub fn show(&mut self, ui: &mut Ui) {
-        self.data_table.handle_file_drop(ui.ctx());
+        self.table.handle_file_drop(ui.ctx());
 
         Frame::new()
             .fill(egui::Color32::from_rgb(37, 37, 38))
@@ -37,8 +35,8 @@ impl BasicEditor {
             .show(ui, |ui| {
                 ui.vertical(|ui| {
                     // File tabs
-                    self.data_table.show_file_tabs(ui);
-                    self.data_table.show_pagination_controls(ui);
+                    self.table.show_file_tabs(ui);
+                    self.table.show_pagination_controls(ui);
 
                     // Table controls
                     self.show_table_controls(ui);
@@ -51,7 +49,7 @@ impl BasicEditor {
 
     pub fn show_table_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if self.data_table.current_fp().is_some() {
+            if self.table.current_fp().is_some() {
                 let export_button = egui::Button::new(
                     egui::RichText::new("📤 Export data")
                         .color(egui::Color32::WHITE)
@@ -61,13 +59,13 @@ impl BasicEditor {
                 .corner_radius(CornerRadius::same(4));
                 let resp = ui.add(export_button);
                 // Open the DataTableArea export popup anchored to this button
-                self.data_table.show_export_popup(ui, &resp);
+                self.table.show_export_popup(ui, &resp);
             }
 
             // File selector if multiple files
-            if !self.data_table.files.is_empty() {
+            if !self.table.files.is_empty() {
                 let cur_name = self
-                    .data_table
+                    .table
                     .current_fp()
                     .map(|f| f.file_path.as_str())
                     .unwrap_or("<none>");
@@ -75,15 +73,12 @@ impl BasicEditor {
                     .selected_text(format!("📂 {}", cur_name))
                     .width(220.0)
                     .show_ui(ui, |ui| {
-                        for (idx, fp) in self.data_table.files.iter().enumerate() {
+                        for (idx, fp) in self.table.files.iter().enumerate() {
                             if ui
-                                .selectable_label(
-                                    idx == self.data_table.current_file,
-                                    &*fp.file_path,
-                                )
+                                .selectable_label(idx == self.table.current_file, &*fp.file_path)
                                 .clicked()
                             {
-                                self.data_table.current_file = idx;
+                                self.table.current_file = idx;
                             }
                         }
                     });
@@ -94,7 +89,7 @@ impl BasicEditor {
     }
 
     pub fn show_results_placeholder(&mut self, ui: &mut Ui) {
-        if self.data_table.files.is_empty() {
+        if self.table.files.is_empty() {
             let (rect, _resp) = ui.allocate_exact_size(
                 egui::Vec2::new(ui.available_width(), 180.0),
                 egui::Sense::hover(),
@@ -141,14 +136,14 @@ impl BasicEditor {
 
         // Snapshot needed data first to avoid holding an immutable borrow while mutating
         let (file_path, preview_len, current_idx, total_files, load_error, no_rows) = {
-            let Some(fp) = self.data_table.current_fp() else {
+            let Some(fp) = self.table.current_fp() else {
                 return;
             };
             (
                 fp.file_path,
                 fp.preview_rows.len(),
-                self.data_table.current_file,
-                self.data_table.files.len(),
+                self.table.current_file,
+                self.table.files.len(),
                 fp.load_error,
                 fp.preview_rows.is_empty(),
             )
@@ -179,8 +174,8 @@ impl BasicEditor {
                                 .color(egui::Color32::from_rgb(200, 180, 150)),
                         );
                         if ui.button("Clear filters").clicked() {
-                            self.data_table.clear_all_filters_current_file();
-                            self.data_table.reload_current_preview_page();
+                            self.table.clear_all_filters_current_file();
+                            self.table.reload_current_preview_page();
                         }
                     });
                 });
@@ -216,18 +211,18 @@ impl BasicEditor {
                 ui.add_space(6.0);
 
                 // Pinned header + shared horizontal scroll
-                self.data_table.show_preview_table(ui);
+                self.table.show_preview_table(ui);
             });
 
         if reload_requested
             && let Some(path) = self
-                .data_table
+                .table
                 .current_fp()
                 .map(|fp| PathBuf::from(&fp.file_path))
         {
-            let idx = self.data_table.current_file;
-            self.data_table.files.remove(idx);
-            self.data_table.load_preview(path);
+            let idx = self.table.current_file;
+            self.table.files.remove(idx);
+            self.table.load_preview(path);
         }
     }
 }

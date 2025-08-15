@@ -13,8 +13,6 @@ license = "MIT"
 [workspace.dependencies]
 mtf = { version = "0.6.1", default-features = false, path = "crates/mft" }
 csvs_convert = { version = "0.12.1", features = ["converters", "parquet"] }
-
-# Core dependencies
 tokio = { version = "1", features = ["full"] }
 anyhow = { version = "1.0" }
 thiserror = "2.0.14"
@@ -43,7 +41,6 @@ rayon = "1.10.0"
 lexical-core = "1.0.5"
 simdutf8 = "0.1.5"
 smallvec = "1.15.1"
-mlua = "0.11.2"
 snap = "1.1.1"
 rust_decimal = "1.37.2"
 dotenvy = "0.15.7"
@@ -55,7 +52,6 @@ csv-index = "0.1.6"
 simd-json = "0.15.1"
 directories = "6.0.0"
 qsv-sniffer = "0.11.0"
-reqwest = "0.12.23"
 docopt = "1.1.1"
 filetime = "0.2.25"
 zip = "4.3.0"
@@ -88,7 +84,6 @@ tracing-subscriber = { version = "0.3.19", features = [
 log = { version = "0.4.27" }
 tracing-appender = "0.2.3"
 tracing-log = "0.2.0"
-
 time = { version = "0.3.41", features = [
     "serde",
     "parsing",
@@ -104,6 +99,18 @@ bon = "3.6.5"
 num_cpus = "1.17.0"
 speedate = "0.17.0"
 csv = "1"
+reqwest = { version = "0.12", features = [
+    "blocking",
+    "brotli",
+    "cookies",
+    "deflate",
+    "gzip",
+    "http2",
+    "json",
+    "rustls-tls",
+    "stream",
+    "zstd",
+], default-features = false }
 
 tantivy = "0.24.2"
 tantivy-query-grammar = "0.24.0"
@@ -120,9 +127,9 @@ tantivy-derive = { git = "https://github.com/nguyenthdat/tantivy-derive.git" }
 # ] }
 # rusqlite = "0.37.0"
 
-eframe = "0.32.0"
-egui = "0.32.0"
-egui_extras = { version = "0.32.0", features = [
+eframe = "0.32.1"
+egui = "0.32.1"
+egui_extras = { version = "0.32.1", features = [
     "all_loaders",
     "chrono",
     "datepicker",
@@ -131,7 +138,7 @@ egui_extras = { version = "0.32.0", features = [
     "svg_text",
     "syntect",
 ] }
-epaint = { version = "0.32.0", features = ["serde"] }
+epaint = { version = "0.32.1", features = ["serde"] }
 
 rfd = { version = "0.15.4", features = [
     "tokio",
@@ -212,7 +219,6 @@ panic = "abort"
 csv = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
 csv-core = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
 csv-index = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
-csvlens = { git = "https://github.com/jqnatividad/csvlens", branch = "133-natural-sort" }
 csvs_convert = { git = "https://github.com/jqnatividad/csvs_convert", branch = "bump-rust_xlsxwriter-to-0.88" }
 grex = { git = "https://github.com/jqnatividad/grex", branch = "bumped-dependencies-202502" }
 json-objects-to-csv = { git = "https://github.com/jqnatividad/json-objects-to-csv", branch = "preserve_order_issue_10" }

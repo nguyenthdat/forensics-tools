@@ -229,32 +229,8 @@ pub fn version() -> String {
     enabled_features.push_str("apply;");
     enabled_features.push_str("foreach;");
     enabled_features.push_str("geocode;");
-    {
-        let luau = mlua::Lua::new();
-        match luau.load("return _VERSION").eval() {
-            Ok(version_info) => {
-                match version_info {
-                    mlua::Value::String(luaustring_val) => {
-                        let string_val = luaustring_val.to_string_lossy();
-                        if string_val == "Luau" {
-                            enabled_features.push_str("Luau - version not specified;");
-                        } else {
-                            // safety: safe to unwrap as we're just using it to append to
-                            // enabled_features
-                            write!(enabled_features, "{string_val};").unwrap();
-                        }
-                    },
-                    _ => {
-                        enabled_features.push_str("Luau - ?;");
-                    },
-                }
-            },
-            // safety: safe to unwrap as we're just using it to append to enabled_features
-            Err(e) => write!(enabled_features, "Luau - cannot retrieve version: {e};").unwrap(),
-        }
-    }
-
     enabled_features.push_str("to;");
+
     #[allow(clippy::const_is_empty)]
     if WAKA_POLARS_REV.is_empty() {
         enabled_features.push_str(format!("polars-{};", polars::VERSION).as_str());

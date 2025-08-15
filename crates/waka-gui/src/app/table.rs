@@ -107,8 +107,7 @@ pub struct FilePreview {
     pub sort_desc:        bool,
 }
 
-#[derive(Debug, Clone, Builder)]
-pub struct DataTableArea {
+pub struct TableEditor {
     pub files:                Vec<FilePreview>,
     pub current_file:         usize,
     pub toal_rows:            usize, // kept for backward-compat
@@ -120,7 +119,7 @@ pub struct DataTableArea {
     pub pending_reload:       bool,
 }
 
-impl Default for DataTableArea {
+impl Default for TableEditor {
     fn default() -> Self {
         Self {
             files:                Vec::new(),
@@ -136,7 +135,7 @@ impl Default for DataTableArea {
     }
 }
 
-impl DataTableArea {
+impl TableEditor {
     /// Render the preview table with a header that stays pinned vertically
     /// while sharing the same horizontal scroll as the body.
     pub fn show_preview_table(&mut self, ui: &mut Ui) {
