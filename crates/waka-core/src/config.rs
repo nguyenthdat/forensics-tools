@@ -9,6 +9,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+use bon::Builder;
 use qsv_sniffer::{SampleSize, Sniffer};
 use serde::de::{Deserialize, Deserializer, Error};
 use tracing::{debug, info, warn};
@@ -50,7 +51,7 @@ pub enum SpecialFormat {
     Mft,
     Unknown,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Delimiter(pub u8);
 
 /// Delimiter represents values that can be passed from the command line that
@@ -93,7 +94,8 @@ impl<'de> Deserialize<'de> for Delimiter {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Builder)]
+#[builder(derive(Clone, Debug, Into))]
 pub struct Config {
     pub path:              Option<PathBuf>, // None implies <stdin>
     idx_path:              Option<PathBuf>,
@@ -189,11 +191,11 @@ impl Config {
             Some(ref s) => {
                 let mut path = PathBuf::from(s);
 
-                // if QSV_SKIP_FORMAT_CHECK is set or path is a temp file, we skip format check
+                // if WAKA_SKIP_FORMAT_CHECK is set or path is a temp file, we skip format check
                 let temp_dir = crate::config::TEMP_FILE_DIR
                     .get_or_init(|| tempfile::TempDir::new().unwrap().keep());
                 skip_format_check = sniff
-                    || util::get_envvar_flag("QSV_SKIP_FORMAT_CHECK")
+                    || util::get_envvar_flag("WAKA_SKIP_FORMAT_CHECK")
                     || path.starts_with(temp_dir);
 
                 let special_format = {

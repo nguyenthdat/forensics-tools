@@ -11228,6 +11228,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-segmentation",
  "ustr",
+ "waka-core",
 ]
 
 [[package]]

@@ -9,8 +9,10 @@ pub fn run(save: bool) -> anyhow::Result<()> {
         std::io::stdin().read_to_string(&mut buffer)?;
         clipboard.set_text(buffer).unwrap();
     } else {
-        print!("{}", clipboard.get_text().unwrap());
+        let text = clipboard.get_text()?;
+        if text.is_empty() {
+            return Err(anyhow::anyhow!("Clipboard is empty"));
+        }
     }
-
     Ok(())
 }

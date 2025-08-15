@@ -1,9 +1,9 @@
 use std::cmp;
 
 use anyhow::anyhow;
+use bon::Builder;
 use csv::ByteRecord;
 use rayon::slice::ParallelSliceMut;
-use serde::Deserialize;
 
 use crate::{
     config::{Config, Delimiter},
@@ -11,32 +11,33 @@ use crate::{
     sort::{iter_cmp, iter_cmp_num},
     util,
 };
-#[derive(Deserialize)]
-struct Args {
-    arg_input:         Option<String>,
-    flag_select:       SelectColumns,
-    flag_numeric:      bool,
-    flag_ignore_case:  bool,
-    flag_sorted:       bool,
-    flag_dupes_output: Option<String>,
-    flag_output:       Option<String>,
-    flag_no_headers:   bool,
-    flag_delimiter:    Option<Delimiter>,
-    flag_jobs:         Option<usize>,
-    flag_quiet:        bool,
-    flag_memcheck:     bool,
+#[derive(Clone, Debug, Builder)]
+#[builder(derive(Clone, Debug, Into))]
+pub struct Args {
+    #[builder(into)]
+    pub arg_input:         Option<String>,
+    pub flag_select:       SelectColumns,
+    pub flag_numeric:      bool,
+    pub flag_ignore_case:  bool,
+    pub flag_sorted:       bool,
+    #[builder(into)]
+    pub flag_dupes_output: Option<String>,
+    #[builder(into)]
+    pub flag_output:       Option<String>,
+    pub flag_no_headers:   bool,
+    pub flag_delimiter:    Option<Delimiter>,
+    pub flag_jobs:         Option<usize>,
+    pub flag_memcheck:     bool,
 }
 
-#[derive(Debug)]
-enum ComparisonMode {
+#[derive(Debug, Clone, PartialEq, Hash, Copy, Eq)]
+pub enum ComparisonMode {
     Numeric,
     IgnoreCase,
     Normal,
 }
 
-pub fn run(argv: &[&str]) -> anyhow::Result<()> {
-    let args: Args = util::get_args("", argv)?;
-
+pub fn run(args: Args) -> anyhow::Result<usize> {
     let compare_mode = if args.flag_numeric {
         ComparisonMode::Numeric
     } else if args.flag_ignore_case {
@@ -182,13 +183,7 @@ pub fn run(argv: &[&str]) -> anyhow::Result<()> {
     dupewtr.flush()?;
     wtr.flush()?;
 
-    if args.flag_quiet {
-        return Ok(());
-    }
-
-    eprintln!("{dupe_count}");
-
-    Ok(())
+    Ok(dupe_count)
 }
 
 /// Try comparing `a` and `b` ignoring the case

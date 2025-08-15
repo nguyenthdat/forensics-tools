@@ -54,3 +54,4 @@ simdutf8 = { version = "0.1.5", features = [
     "aarch64_neon_prefetch",
 ] }
 num_cpus.workspace = true
+waka-core = { version = "0.0.1", path = "../waka-core" }

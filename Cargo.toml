@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/mft", "crates/qsv", "crates/waka-gui", "crates/waka-core"]
+members = ["crates/mft", "crates/waka-gui", "crates/waka-core"]
 
 [workspace.package]
 version = "0.0.1"

@@ -1,31 +1,30 @@
-#![allow(clippy::cast_precision_loss)]
-
 use std::{
     fs,
     io::{self, BufRead, Read, Write, stdin},
 };
 
 use anyhow::anyhow;
+use bon::Builder;
 use gzp::{ZWriter, par::compress::ParCompressBuilder, snap::Snap};
-use serde::Deserialize;
 
 use crate::{config, util};
 
-#[derive(Deserialize)]
-struct Args {
-    arg_input:      Option<String>,
-    flag_output:    Option<String>,
-    cmd_compress:   bool,
-    cmd_decompress: bool,
-    cmd_check:      bool,
-    cmd_validate:   bool,
-    flag_jobs:      Option<usize>,
-    flag_quiet:     bool,
+#[derive(Clone, Debug, Builder)]
+#[builder(derive(Clone, Debug, Into))]
+pub struct Args {
+    #[builder(into)]
+    pub arg_input:      Option<String>,
+    #[builder(into)]
+    pub flag_output:    Option<String>,
+    pub cmd_compress:   bool,
+    pub cmd_decompress: bool,
+    pub cmd_check:      bool,
+    pub cmd_validate:   bool,
+    pub flag_jobs:      Option<usize>,
+    pub flag_quiet:     bool,
 }
 
-pub fn run(argv: &[&str]) -> anyhow::Result<()> {
-    let args: Args = util::get_args("", argv)?;
-
+pub fn run(args: Args) -> anyhow::Result<()> {
     let input_bytes;
 
     let input_reader: Box<dyn BufRead> = if let Some(uri) = &args.arg_input {

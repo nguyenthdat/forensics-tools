@@ -1,48 +1,46 @@
-#![allow(clippy::cast_precision_loss)] // we're not worried about precision loss here
-
 use anyhow::anyhow;
-use serde::Deserialize;
+use bon::Builder;
 
 use crate::{
     config::{Config, Delimiter},
     util,
 };
 
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct Args {
-    arg_input:            Option<String>,
-    flag_human_readable:  bool,
-    flag_width:           bool,
-    flag_width_no_delims: bool,
-    flag_json:            bool,
-    flag_no_polars:       bool,
-    flag_low_memory:      bool,
-    flag_flexible:        bool,
-    flag_no_headers:      bool,
-    flag_delimiter:       Option<Delimiter>,
+#[derive(Clone, Debug, PartialEq, Hash, Builder)]
+#[builder(derive(Clone, Debug, Into))]
+pub struct Args {
+    #[builder(into)]
+    pub arg_input:            Option<String>,
+    pub flag_width:           bool,
+    pub flag_width_no_delims: bool,
+    pub flag_no_polars:       bool,
+    pub flag_low_memory:      bool,
+    pub flag_flexible:        bool,
+    #[builder(default = true)]
+    pub flag_no_headers:      bool,
+    #[builder(into)]
+    pub flag_delimiter:       Option<Delimiter>,
 }
 
 #[derive(Copy, Clone, PartialEq)]
-enum CountDelimsMode {
+pub enum CountDelimsMode {
     IncludeDelims,
     ExcludeDelims,
     NotRequired,
 }
 
-#[derive(Default)]
-struct WidthStats {
-    max:      usize,
-    avg:      f64,
-    median:   usize,
-    min:      usize,
-    variance: f64,
-    stddev:   f64,
-    mad:      f64,
+#[derive(Default, Clone, Debug, Copy, PartialEq)]
+pub struct WidthStats {
+    pub max:      usize,
+    pub avg:      f64,
+    pub median:   usize,
+    pub min:      usize,
+    pub variance: f64,
+    pub stddev:   f64,
+    pub mad:      f64,
 }
 
-pub fn run(argv: &[&str]) -> anyhow::Result<()> {
-    let args: Args = util::get_args("", argv)?;
+pub fn run(args: Args) -> anyhow::Result<(u64, WidthStats)> {
     let conf = Config::new(args.arg_input.as_ref())
         .no_headers(args.flag_no_headers)
         // we also want to count the quotes when computing width
@@ -94,48 +92,18 @@ pub fn run(argv: &[&str]) -> anyhow::Result<()> {
             }
         };
 
-    if args.flag_json {
-        tracing::info!(
-            r#"{{"count":{},"max":{},"avg":{},"median":{},"min":{},"variance":{},"stddev":{},"mad":{}}}"#,
-            count,
-            record_stats.max,
-            util::round_num(record_stats.avg, 4),
-            record_stats.median,
-            record_stats.min,
-            util::round_num(record_stats.variance, 4),
-            util::round_num(record_stats.stddev, 4),
-            util::round_num(record_stats.mad, 4),
-        );
-    } else if args.flag_human_readable {
-        if count_delims_mode == CountDelimsMode::NotRequired {
-            tracing::info!("{count}");
-        } else {
-            tracing::info!(
-                "{count};max:{} avg:{} median:{} min:{} variance:{} stddev:{} mad:{}",
-                record_stats.max as u64,
-                record_stats.avg,
-                record_stats.median as u64,
-                record_stats.min as u64,
-                record_stats.variance,
-                record_stats.stddev,
-                record_stats.mad,
-            );
-        }
-    } else if count_delims_mode == CountDelimsMode::NotRequired {
-        tracing::info!("{count}");
-    } else {
-        tracing::info!(
-            "{count};{max}-{avg}-{median}-{min}-{variance}-{stddev}-{mad}",
-            max = record_stats.max,
-            avg = util::round_num(record_stats.avg, 4),
-            median = record_stats.median,
-            min = record_stats.min,
-            variance = util::round_num(record_stats.variance, 4),
-            stddev = util::round_num(record_stats.stddev, 4),
-            mad = util::round_num(record_stats.mad, 4),
-        );
-    }
-    Ok(())
+    tracing::info!(
+        "{count};{max}-{avg}-{median}-{min}-{variance}-{stddev}-{mad}",
+        max = record_stats.max,
+        avg = util::round_num(record_stats.avg, 4),
+        median = record_stats.median,
+        min = record_stats.min,
+        variance = util::round_num(record_stats.variance, 4),
+        stddev = util::round_num(record_stats.stddev, 4),
+        mad = util::round_num(record_stats.mad, 4),
+    );
+
+    Ok((count, record_stats))
 }
 
 /// Counts the number of records in a CSV file and optionally calculates statistics about record

@@ -259,14 +259,14 @@ impl SelectorParser {
 }
 
 #[derive(Clone)]
-enum Selector {
+pub enum Selector {
     One(OneSelector),
     Range(OneSelector, OneSelector),
     Regex(Regex),
 }
 
 #[derive(Clone)]
-enum OneSelector {
+pub enum OneSelector {
     Start,
     End,
     Index(usize),
