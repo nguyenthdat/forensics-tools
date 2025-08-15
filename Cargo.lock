@@ -11145,6 +11145,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "csv-index",
+ "csvs_convert",
  "directories",
  "docopt",
  "dotenvy",
@@ -11184,6 +11185,7 @@ dependencies = [
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "sysinfo 0.37.0",
+ "tabwriter",
  "tantivy",
  "tantivy-derive",
  "tantivy-query-grammar",
@@ -11194,7 +11196,6 @@ dependencies = [
  "tracing-appender",
  "tracing-log",
  "tracing-subscriber",
- "url",
  "zip",
 ]
 

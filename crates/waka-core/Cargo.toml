@@ -58,18 +58,19 @@ rand_xoshiro.workspace = true
 strum = { workspace = true, features = ["phf"] }
 arboard = { workspace = true, features = ["wayland-data-control"] }
 bon.workspace = true
+rand.workspace = true
+byteorder.workspace = true
+gzp = { version = "1", default-features = false, features = ["snappy_default"] }
+tokio = { workspace = true, features = ["full", "tracing"] }
 
 # QSV specific dependencies
 qsv-sniffer.workspace = true
 qsv-stats.workspace = true
 qsv-dateparser.workspace = true
-rand.workspace = true
+csvs_convert.workspace = true
 
 # Tantivy
 tantivy.workspace = true
 tantivy-query-grammar.workspace = true
 tantivy-derive.workspace = true
-byteorder.workspace = true
-url = "2.5.4"
-gzp = { version = "1", default-features = false, features = ["snappy_default"] }
-tokio = { workspace = true, features = ["full", "tracing"] }
+tabwriter = "1.4.1"
