@@ -25,13 +25,11 @@ use tracing_subscriber::layer::SubscriberExt as _;
 use zip::read::root_dir_common_filter;
 
 use crate::{
-    cmd::{
-        count::polars_count_input,
-        stats::{JsonTypes, STATSDATA_TYPES_MAP, StatsData},
-    },
     config,
     config::{Config, DEFAULT_RDR_BUFFER_CAPACITY, Delimiter, SpecialFormat, get_special_format},
+    count::polars_count_input,
     select::SelectColumns,
+    stats::{self, JsonTypes, STATSDATA_TYPES_MAP, StatsData},
 };
 
 #[macro_export]
@@ -94,14 +92,13 @@ const CARGO_BIN_NAME: &str = match option_env!("CARGO_BIN_NAME") {
     Some(name) => name,
     None => env!("CARGO_PKG_NAME"), // fallback to package name
 };
-const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const TARGET: &str = match option_env!("TARGET") {
     Some(target) => target,
     None => "Unknown_target",
 };
 
-const QSV_POLARS_REV: &str = match option_env!("QSV_POLARS_REV") {
+const WAKA_POLARS_REV: &str = match option_env!("WAKA_POLARS_REV") {
     Some(rev) => rev,
     None => "",
 };
@@ -158,10 +155,6 @@ pub fn visualize_whitespace(s: &str) -> String {
         }
     }
     result
-}
-
-fn default_user_agent() -> String {
-    format!("{CARGO_BIN_NAME}/{CARGO_PKG_VERSION} ({TARGET};")
 }
 
 pub fn max_jobs() -> usize {
@@ -260,11 +253,11 @@ pub fn version() -> String {
 
     enabled_features.push_str("to;");
     #[allow(clippy::const_is_empty)]
-    if QSV_POLARS_REV.is_empty() {
+    if WAKA_POLARS_REV.is_empty() {
         enabled_features.push_str(format!("polars-{};", polars::VERSION).as_str());
     } else {
         enabled_features
-            .push_str(format!("polars-{}:{};", polars::VERSION, QSV_POLARS_REV).as_str());
+            .push_str(format!("polars-{}:{};", polars::VERSION, WAKA_POLARS_REV).as_str());
     }
 
     enabled_features.push('-');
@@ -1756,7 +1749,10 @@ pub fn get_stats_records(
         return Ok((ByteRecord::new(), Vec::new(), HashMap::new()));
     }
 
-    let input_path = args.arg_input.as_ref().ok_or("No input provided")?;
+    let input_path = args
+        .arg_input
+        .as_ref()
+        .ok_or(anyhow!("No input provided"))?;
     let canonical_input_path = Path::new(input_path).canonicalize()?;
     let statsdata_path = canonical_input_path.with_extension("stats.csv.data.jsonl");
 
@@ -1839,7 +1835,7 @@ pub fn get_stats_records(
 
     // otherwise, run stats command to generate stats.csv.data.jsonl file
     if !stats_data_loaded {
-        let stats_args = crate::cmd::stats::Args {
+        let stats_args = stats::Args {
             arg_input:             args.arg_input.as_ref().map(String::from),
             flag_select:           crate::select::SelectColumns::parse("").unwrap(),
             flag_everything:       false,

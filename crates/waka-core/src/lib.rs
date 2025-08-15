@@ -1,5 +1,5 @@
-pub mod cmd;
 pub mod config;
+pub mod count;
 pub mod index;
 pub mod lookup;
 pub mod select;

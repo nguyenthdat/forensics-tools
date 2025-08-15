@@ -46,3 +46,13 @@ libc.workspace = true
 tracing-subscriber = { workspace = true, features = ["time"] }
 tracing-appender.workspace = true
 tracing-log.workspace = true
+itertools.workspace = true
+
+crossbeam-channel = "0.5.15"
+qsv-dateparser = "0.13.0"
+threadpool = "1.8.1"
+qsv-stats = "0.37.0"
+itoa = "1.0.15"
+sha256 = "1.6.0"
+fast-float2 = "0.2.3"
+atoi_simd = "0.16.1"
