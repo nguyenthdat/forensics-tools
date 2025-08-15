@@ -11141,6 +11141,7 @@ dependencies = [
  "atoi_simd",
  "bon",
  "byteorder",
+ "bytes",
  "chrono",
  "crossbeam-channel",
  "csv",
@@ -11150,8 +11151,10 @@ dependencies = [
  "docopt",
  "dotenvy",
  "fast-float2",
+ "file-format",
  "filetime",
  "foldhash",
+ "futures",
  "futures-util",
  "gzp",
  "itertools 0.14.0",
@@ -11196,6 +11199,7 @@ dependencies = [
  "tracing-appender",
  "tracing-log",
  "tracing-subscriber",
+ "url",
  "zip",
 ]
 

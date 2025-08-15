@@ -9,6 +9,7 @@ pub mod lookup;
 pub mod select;
 pub mod slice;
 pub mod snappy;
+pub mod sniff;
 pub mod sort;
 pub mod sqlp;
 pub mod stats;
