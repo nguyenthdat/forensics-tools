@@ -2,7 +2,6 @@ use std::cmp;
 
 use anyhow::anyhow;
 use bon::Builder;
-use csv::ByteRecord;
 use rayon::slice::ParallelSliceMut;
 
 use crate::{
@@ -37,37 +36,42 @@ pub enum ComparisonMode {
     Normal,
 }
 
-pub fn run(args: Args) -> anyhow::Result<usize> {
-    let compare_mode = if args.flag_numeric {
-        ComparisonMode::Numeric
-    } else if args.flag_ignore_case {
-        ComparisonMode::IgnoreCase
-    } else {
-        ComparisonMode::Normal
-    };
+pub fn run_with<R, WMain, WDup>(
+    rdr: &mut csv::Reader<R>,
+    wtr: &mut csv::Writer<WMain>,
+    dupewtr: &mut csv::Writer<WDup>,
+    dupes_output: bool,
+    select: SelectColumns,
+    compare_mode: ComparisonMode,
+    sorted: bool,
+    no_headers: bool,
+    jobs: Option<usize>,
+    memcheck_path: Option<&std::path::Path>,
+    memcheck: bool,
+) -> anyhow::Result<usize>
+where
+    R: std::io::Read,
+    WMain: std::io::Write,
+    WDup: std::io::Write,
+{
+    // Build a lightweight Config just to leverage header handling and selection logic.
+    let rconfig = Config::new(None).no_headers(no_headers).select(select);
 
-    let rconfig = Config::new(args.arg_input.as_ref())
-        .delimiter(args.flag_delimiter)
-        .no_headers(args.flag_no_headers)
-        .select(args.flag_select);
-
-    let mut rdr = rconfig.reader()?;
-    let mut wtr = Config::new(args.flag_output.as_ref()).writer()?;
-    let dupes_output = args.flag_dupes_output.is_some();
-    let mut dupewtr = Config::new(args.flag_dupes_output.as_ref()).writer()?;
-
+    // Prepare headers and selection
     let headers = rdr.byte_headers()?;
     if dupes_output {
         dupewtr.write_byte_record(headers)?;
     }
     let sel = rconfig.selection(headers)?;
 
-    rconfig.write_headers(&mut rdr, &mut wtr)?;
-    let mut dupe_count = 0_usize;
+    // Write headers (if applicable) to the main writer and advance the reader
+    rconfig.write_headers(rdr, wtr)?;
 
-    if args.flag_sorted {
-        let mut record = ByteRecord::new();
-        let mut next_record = ByteRecord::new();
+    let mut dupe_count = 0usize;
+
+    if sorted {
+        let mut record = csv::ByteRecord::new();
+        let mut next_record = csv::ByteRecord::new();
 
         rdr.read_byte_record(&mut record)?;
         loop {
@@ -106,12 +110,12 @@ pub fn run(args: Args) -> anyhow::Result<usize> {
             }
         }
     } else {
-        // we're loading the entire file into memory, we need to check avail mem
-        if let Some(path) = rconfig.path.clone() {
-            util::mem_file_check(&path, false, args.flag_memcheck)?;
+        // we're potentially loading the entire file into memory; optionally check available memory
+        if let Some(path) = memcheck_path {
+            util::mem_file_check(path, false, memcheck)?;
         }
 
-        util::njobs(args.flag_jobs);
+        util::njobs(jobs);
 
         let mut all = rdr.byte_records().collect::<Result<Vec<_>, _>>()?;
         match compare_mode {
@@ -184,6 +188,40 @@ pub fn run(args: Args) -> anyhow::Result<usize> {
     wtr.flush()?;
 
     Ok(dupe_count)
+}
+
+pub fn run(args: Args) -> anyhow::Result<usize> {
+    let compare_mode = if args.flag_numeric {
+        ComparisonMode::Numeric
+    } else if args.flag_ignore_case {
+        ComparisonMode::IgnoreCase
+    } else {
+        ComparisonMode::Normal
+    };
+
+    let rconfig = Config::new(args.arg_input.as_ref())
+        .delimiter(args.flag_delimiter)
+        .no_headers(args.flag_no_headers)
+        .select(args.flag_select.clone());
+
+    let mut rdr = rconfig.reader()?;
+    let mut wtr = Config::new(args.flag_output.as_ref()).writer()?;
+    let dupes_output = args.flag_dupes_output.is_some();
+    let mut dupewtr = Config::new(args.flag_dupes_output.as_ref()).writer()?;
+
+    run_with(
+        &mut rdr,
+        &mut wtr,
+        &mut dupewtr,
+        dupes_output,
+        args.flag_select,
+        compare_mode,
+        args.flag_sorted,
+        args.flag_no_headers,
+        args.flag_jobs,
+        rconfig.path.as_deref(),
+        args.flag_memcheck,
+    )
 }
 
 /// Try comparing `a` and `b` ignoring the case
