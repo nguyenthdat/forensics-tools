@@ -1,7 +1,7 @@
 use std::cmp;
 
 use anyhow::anyhow;
-use bon::Builder;
+use bon::{Builder, builder};
 use rayon::slice::ParallelSliceMut;
 
 use crate::{
@@ -37,6 +37,7 @@ pub enum ComparisonMode {
     Normal,
 }
 
+#[builder]
 pub fn run_with<R, WMain, WDup>(
     rdr: &mut csv::Reader<R>,
     wtr: &mut csv::Writer<WMain>,
@@ -210,19 +211,19 @@ pub fn run(args: Args) -> anyhow::Result<usize> {
     let dupes_output = args.flag_dupes_output.is_some();
     let mut dupewtr = Config::new(args.flag_dupes_output.as_ref()).writer()?;
 
-    run_with(
-        &mut rdr,
-        &mut wtr,
-        &mut dupewtr,
-        dupes_output,
-        args.flag_select,
-        compare_mode,
-        args.flag_sorted,
-        args.flag_no_headers,
-        args.flag_jobs,
-        rconfig.path.as_deref(),
-        args.flag_memcheck,
-    )
+    run_with()
+        .rdr(&mut rdr)
+        .wtr(&mut wtr)
+        .dupewtr(&mut dupewtr)
+        .dupes_output(dupes_output)
+        .select(args.flag_select)
+        .compare_mode(compare_mode)
+        .sorted(args.flag_sorted)
+        .no_headers(args.flag_no_headers)
+        .maybe_jobs(args.flag_jobs)
+        .maybe_memcheck_path(rconfig.path.as_deref())
+        .memcheck(args.flag_memcheck)
+        .call()
 }
 
 /// Try comparing `a` and `b` ignoring the case
