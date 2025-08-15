@@ -546,7 +546,9 @@ pub fn run(argv: &[&str]) -> anyhow::Result<()> {
     );
 
     // we will write the stats to a temp file
-    let wconfig = Config::new(Some(stats_csv_tempfile_fname.clone()).as_ref())
+    let wconfig = Config::builder()
+        .path(&stats_csv_tempfile_fname)
+        .build()
         .delimiter(Some(Delimiter(output_delim)));
     let mut wtr = wconfig.writer()?;
 
@@ -1373,7 +1375,9 @@ impl Args {
     /// * **Minimal Overhead**: Creates configuration without unnecessary allocations
     #[inline]
     fn rconfig(&self) -> Config {
-        Config::new(self.arg_input.as_ref())
+        Config::builder()
+            .maybe_path(self.arg_input.as_ref())
+            .build()
             .delimiter(self.flag_delimiter)
             .no_headers(self.flag_no_headers)
             .select(self.flag_select.clone())

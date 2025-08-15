@@ -437,7 +437,9 @@ pub fn many_configs(
     let confs = inps
         .into_iter()
         .map(|p| {
-            Config::new(Some(p).as_ref())
+            Config::builder()
+                .path(&p)
+                .build()
                 .delimiter(delim)
                 .no_headers(no_headers)
                 .flexible(flexible)
@@ -654,7 +656,10 @@ impl FilenameTemplate {
             std::fs::create_dir_all(parent)?;
         }
         let spath = Some(full_path.display().to_string());
-        Config::new(spath.as_ref()).writer()
+        Config::builder()
+            .maybe_path(spath.as_ref())
+            .build()
+            .writer()
     }
 }
 

@@ -381,10 +381,11 @@ pub fn run(argv: &[&str]) -> anyhow::Result<()> {
     // scanning the entire file with a 0 infer_len which triggers a full table scan.
     args.flag_infer_len =
         if args.flag_infer_len == 0 && !is_sql_script && !skip_input && args.arg_input.len() == 1 {
-            let rconfig =
-                Config::new(Some(args.arg_input[0].to_string_lossy().to_string()).as_ref())
-                    .delimiter(args.flag_delimiter)
-                    .no_headers(false);
+            let rconfig = Config::builder()
+                .path(args.arg_input[0].to_string_lossy())
+                .build()
+                .delimiter(args.flag_delimiter)
+                .no_headers(false);
             util::count_rows(&rconfig).unwrap_or(0) as usize
         } else {
             args.flag_infer_len

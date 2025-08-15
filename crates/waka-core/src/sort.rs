@@ -53,7 +53,9 @@ pub fn run(argv: &[&str]) -> anyhow::Result<()> {
     let reverse = args.flag_reverse;
     let random = args.flag_random;
     let faster = args.flag_faster;
-    let rconfig = Config::new(args.arg_input.as_ref())
+    let rconfig = Config::builder()
+        .maybe_path(args.arg_input.as_ref())
+        .build()
         .delimiter(args.flag_delimiter)
         .no_headers(args.flag_no_headers)
         .select(args.flag_select);
@@ -288,7 +290,10 @@ pub fn run(argv: &[&str]) -> anyhow::Result<()> {
         }),
     }
 
-    let mut wtr = Config::new(args.flag_output.as_ref()).writer()?;
+    let mut wtr = Config::builder()
+        .maybe_path(args.flag_output.as_ref())
+        .build()
+        .writer()?;
     let mut prev: Option<csv::ByteRecord> = None;
     rconfig.write_headers(&mut rdr, &mut wtr)?;
     if args.flag_unique {

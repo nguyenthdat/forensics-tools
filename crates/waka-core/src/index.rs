@@ -71,22 +71,17 @@ impl<R: io::Read + io::Seek, I: io::Read + io::Seek> Indexed<R, I> {
     }
 }
 
-pub struct Args {
-    arg_input:   String,
-    flag_output: Option<String>,
-}
-
-pub fn run(args: Args) -> anyhow::Result<()> {
-    if args.arg_input.to_lowercase().ends_with(".sz") {
+pub fn run(arg_input: &str, flag_output: Option<&str>) -> anyhow::Result<()> {
+    if arg_input.to_lowercase().ends_with(".sz") {
         return Err(anyhow!("Cannot index a snappy file."));
     }
 
-    let pidx = match args.flag_output {
-        None => util::idx_path(Path::new(&args.arg_input)),
+    let pidx = match flag_output {
+        None => util::idx_path(Path::new(&arg_input)),
         Some(p) => PathBuf::from(&p),
     };
 
-    let rconfig = Config::new(Some(args.arg_input).as_ref());
+    let rconfig = Config::builder().path(arg_input).build();
     let mut rdr = rconfig.reader_file()?;
     let mut wtr =
         io::BufWriter::with_capacity(DEFAULT_WTR_BUFFER_CAPACITY, fs::File::create(pidx)?);

@@ -11,14 +11,6 @@ use epaint::{Color32, Shape, Stroke};
 use ext_sort::{ExternalSorter, ExternalSorterBuilder, LimitedBufferBuilder};
 use num_cpus;
 use polars_sql::SQLContext;
-use qsv::{
-    cmd::{
-        extdedup::calculate_memory_limit,
-        sqlp::{Args, OutputMode},
-    },
-    config::{Config, Delimiter},
-    polars::{self, prelude::*},
-};
 use ustr::Ustr;
 
 const RW_BUFFER_CAPACITY: usize = 1_000_000; // 1 MB

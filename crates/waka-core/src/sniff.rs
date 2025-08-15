@@ -327,14 +327,18 @@ async fn get_file_to_sniff(
                     // incomplete lines. We do this coz we streamed the download and the downloaded
                     // file may be more than the sample size, and the final line may be incomplete.
                     wtr_file_path = path.display().to_string();
-                    let mut wtr = Config::new(Some(wtr_file_path.clone()).as_ref())
+                    let mut wtr = Config::builder()
+                        .path(&wtr_file_path)
+                        .build()
                         .no_headers(false)
                         .flexible(true)
                         .quote_style(csv::QuoteStyle::NonNumeric)
                         .writer()?;
 
                     let retrieved_name = file.path().to_str().unwrap().to_string();
-                    let config = Config::new(Some(retrieved_name).as_ref())
+                    let config = Config::builder()
+                        .path(&retrieved_name)
+                        .build()
                         .delimiter(args.flag_delimiter)
                         // we say no_headers so we can just copy the downloaded file over
                         // including headers, to the exact sample size file
@@ -606,7 +610,9 @@ async fn sniff_main(mut args: Args) -> anyhow::Result<()> {
         ));
     }
 
-    let conf = Config::new(Some(sfile_info.file_to_sniff.clone()).as_ref())
+    let conf = Config::builder()
+        .path(&sfile_info.file_to_sniff)
+        .build()
         .flexible(true)
         .delimiter(args.flag_delimiter);
     let n_rows = if sfile_info.downloaded_records == 0 {

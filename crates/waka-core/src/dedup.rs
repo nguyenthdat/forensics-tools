@@ -57,7 +57,10 @@ where
     WDup: std::io::Write,
 {
     // Build a lightweight Config just to leverage header handling and selection logic.
-    let rconfig = Config::new(None).no_headers(no_headers).select(select);
+    let rconfig = Config::builder()
+        .build()
+        .no_headers(no_headers)
+        .select(select);
 
     // Prepare headers and selection
     let headers = rdr.byte_headers()?;
@@ -201,15 +204,23 @@ pub fn run(args: Args) -> anyhow::Result<usize> {
         ComparisonMode::Normal
     };
 
-    let rconfig = Config::new(args.arg_input.as_ref())
+    let rconfig = Config::builder()
+        .maybe_path(args.arg_input.as_ref())
+        .build()
         .delimiter(args.flag_delimiter)
         .no_headers(args.flag_no_headers)
         .select(args.flag_select.clone());
 
     let mut rdr = rconfig.reader()?;
-    let mut wtr = Config::new(args.flag_output.as_ref()).writer()?;
+    let mut wtr = Config::builder()
+        .maybe_path(args.flag_output.as_ref())
+        .build()
+        .writer()?;
     let dupes_output = args.flag_dupes_output.is_some();
-    let mut dupewtr = Config::new(args.flag_dupes_output.as_ref()).writer()?;
+    let mut dupewtr = Config::builder()
+        .maybe_path(args.flag_dupes_output.as_ref())
+        .build()
+        .writer()?;
 
     run_with()
         .rdr(&mut rdr)

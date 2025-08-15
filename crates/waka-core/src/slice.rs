@@ -181,12 +181,16 @@ impl Args {
     }
 
     fn rconfig(&self) -> Config {
-        Config::new(self.arg_input.as_ref())
+        Config::builder()
+            .maybe_path(self.arg_input.as_ref())
+            .build()
             .delimiter(self.flag_delimiter)
             .no_headers(self.flag_no_headers)
     }
 
     fn wconfig(&self) -> Config {
-        Config::new(self.flag_output.as_ref())
+        Config::builder()
+            .maybe_path(self.flag_output.as_ref())
+            .build()
     }
 }

@@ -9,7 +9,6 @@ use std::{
 };
 
 use anyhow::anyhow;
-use bon::Builder;
 use qsv_sniffer::{SampleSize, Sniffer};
 use serde::de::{Deserialize, Deserializer, Error};
 use tracing::{debug, info, warn};
@@ -94,8 +93,7 @@ impl<'de> Deserialize<'de> for Delimiter {
     }
 }
 
-#[derive(Clone, Debug, Builder)]
-#[builder(derive(Clone, Debug, Into))]
+#[derive(Clone, Debug)]
 pub struct Config {
     pub path:              Option<PathBuf>, // None implies <stdin>
     idx_path:              Option<PathBuf>,
@@ -126,42 +124,11 @@ pub trait SeekRead: io::Seek + io::Read {}
 
 impl<T: io::Seek + io::Read> SeekRead for T {}
 
+#[bon::bon]
 impl Config {
-    /// Creates a new `Config` instance with default settings and optional file path.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - An optional reference to a `String` representing the file path.
-    ///
-    /// # Returns
-    ///
-    /// A new `Config` instance.
-    ///
-    /// # Details
-    ///
-    /// This function initializes a `Config` with the following behavior:
-    /// - Uses env var `QSV_DEFAULT_DELIMITER` for default delimiter, or ',' if not set
-    /// - Determines delimiter and Snappy compression based on file extension.
-    /// - Supports sniffing delimiter and preamble rows if `QSV_SNIFF_DELIMITER` or
-    ///   `QSV_SNIFF_PREAMBLE` is set.
-    /// - Sets comment character from `QSV_COMMENT_CHAR` environment variable.
-    /// - Sets headers behavior based on `QSV_NO_HEADERS` environment variable.
-    /// - Configures various other settings from environment variables.
-    ///
-    /// # Environment Variables
-    ///
-    /// - `QSV_DEFAULT_DELIMITER`: Sets the default delimiter.
-    /// - `QSV_SNIFF_DELIMITER` or `QSV_SNIFF_PREAMBLE`: Enables sniffing of delimiter and preamble
-    ///   rows.
-    /// - `QSV_COMMENT_CHAR`: Sets the comment character.
-    /// - `QSV_NO_HEADERS`: Determines if the file has headers.
-    /// - `QSV_AUTOINDEX_SIZE`: Sets the auto-index size.
-    /// - `QSV_PREFER_DMY`: Sets date format preference.
-    /// - `QSV_RDR_BUFFER_CAPACITY`: Sets read buffer capacity.
-    /// - `QSV_WTR_BUFFER_CAPACITY`: Sets write buffer capacity.
-    /// - `QSV_SKIP_FORMAT_CHECK`: Set to skip file extension checking.
-    pub fn new(path: Option<&String>) -> Config {
-        let default_delim = match env::var("QSV_DEFAULT_DELIMITER") {
+    #[builder]
+    pub fn new(#[builder(into)] path: Option<String>) -> Config {
+        let default_delim = match env::var("WAKA_DEFAULT_DELIMITER") {
             Ok(delim) => Delimiter::decode_delimiter(&delim).unwrap().as_byte(),
             _ => b',',
         };

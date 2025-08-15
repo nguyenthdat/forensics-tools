@@ -83,11 +83,15 @@ impl<R: io::Read + io::Seek, W: io::Write> IoState<R, W> {
 
 impl Args {
     fn new_io_state(&self) -> anyhow::Result<IoState<fs::File, Box<dyn io::Write + 'static>>> {
-        let rconf1 = Config::new(Some(self.arg_input1.clone()).as_ref())
+        let rconf1 = Config::builder()
+            .path(&self.arg_input1)
+            .build()
             .delimiter(self.flag_delimiter)
             .no_headers(self.flag_no_headers)
             .select(self.arg_columns1.clone());
-        let rconf2 = Config::new(Some(self.arg_input2.clone()).as_ref())
+        let rconf2 = Config::builder()
+            .path(&self.arg_input2)
+            .build()
             .delimiter(self.flag_delimiter)
             .no_headers(self.flag_no_headers)
             .select(self.arg_columns2.clone());
@@ -96,7 +100,10 @@ impl Args {
         let mut rdr2 = rconf2.reader_file()?;
         let (sel1, sel2) = self.get_selections(&rconf1, &mut rdr1, &rconf2, &mut rdr2)?;
         Ok(IoState {
-            wtr: Config::new(self.flag_output.as_ref()).writer()?,
+            wtr: Config::builder()
+                .maybe_path(self.flag_output.as_ref())
+                .build()
+                .writer()?,
             rdr1,
             sel1,
             rdr2,

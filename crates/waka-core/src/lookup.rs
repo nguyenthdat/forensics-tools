@@ -11,14 +11,14 @@ use serde_json::Value;
 use tracing::{debug, info};
 use util::expand_tilde;
 
-use crate::util;
+use crate::{config, util};
 
 pub struct LookupTableOptions {
     pub name:           String,
     pub uri:            String,
     pub cache_age_secs: i64,
     pub cache_dir:      String,
-    pub delimiter:      Option<crate::config::Delimiter>,
+    pub delimiter:      Option<config::Delimiter>,
     pub ckan_api_url:   Option<String>,
     pub ckan_token:     Option<String>,
     pub timeout_secs:   u16,
@@ -181,7 +181,9 @@ pub fn load_lookup_table(opts: &LookupTableOptions) -> anyhow::Result<LookupTabl
     }
 
     // Read headers from the lookup table
-    let conf = crate::config::Config::new(Some(lookup_table_uri.clone()).as_ref())
+    let conf = config::Config::builder()
+        .path(&lookup_table_uri)
+        .build()
         .delimiter(opts.delimiter)
         .comment(Some(b'#'))
         .no_headers(false);

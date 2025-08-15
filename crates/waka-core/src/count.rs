@@ -46,7 +46,9 @@ pub struct WidthStats {
 }
 
 pub fn run(args: Args) -> anyhow::Result<(u64, WidthStats)> {
-    let conf = Config::new(args.arg_input.as_ref())
+    let conf = Config::builder()
+        .maybe_path(args.arg_input.as_ref())
+        .build()
         .no_headers(args.flag_no_headers)
         // we also want to count the quotes when computing width
         .quoting(!args.flag_width || !args.flag_width_no_delims)
