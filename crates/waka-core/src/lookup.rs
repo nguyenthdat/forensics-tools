@@ -5,6 +5,7 @@ use std::{
     time::{Instant, SystemTime},
 };
 
+use anyhow::anyhow;
 use reqwest::blocking::Client;
 use serde_json::Value;
 use tracing::{debug, info};
@@ -90,9 +91,7 @@ pub fn set_qsv_cache_dir(cache_dir: &str) -> anyhow::Result<String> {
 /// - File operations fail (create/delete/read)
 /// - Remote downloads fail
 /// - CSV parsing fails
-pub fn load_lookup_table(
-    opts: &LookupTableOptions,
-) -> Result<LookupTableResult, Box<dyn std::error::Error>> {
+pub fn load_lookup_table(opts: &LookupTableOptions) -> anyhow::Result<LookupTableResult> {
     let mut lookup_table_uri = opts.uri.clone();
     let cached_csv_path = Path::new(&opts.cache_dir).join(format!("{}.csv", opts.name));
 
@@ -209,7 +208,7 @@ fn download_lookup_table(
     resource_search: bool,
     cache_csv_last_modified: Option<SystemTime>,
     opts: &LookupTableOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let client = Client::builder()
         .brotli(true)
         .gzip(true)
@@ -254,7 +253,7 @@ fn get_ckan_response(
     uri: &str,
     resource_search: bool,
     opts: &LookupTableOptions,
-) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
+) -> anyhow::Result<reqwest::blocking::Response> {
     let mut headers = reqwest::header::HeaderMap::new();
 
     if let Some(token) = &opts.ckan_token {
@@ -270,7 +269,7 @@ fn get_ckan_response(
 
         let resource_id = resource_search_json["result"]["results"][0]["id"]
             .as_str()
-            .ok_or("Cannot find resource name")?;
+            .ok_or(anyhow!("Cannot find resource name"))?;
 
         let resource_uri = format!(
             "{}/resource_show?id={}",
@@ -285,9 +284,9 @@ fn get_ckan_response(
             .text()?;
         let resource_show_json: Value = serde_json::from_str(&resource_show_result)?;
 
-        let url = resource_show_json["result"]["url"]
-            .as_str()
-            .ok_or("Cannot get resource URL from resource_show JSON response")?;
+        let url = resource_show_json["result"]["url"].as_str().ok_or(anyhow!(
+            "Cannot get resource URL from resource_show JSON response"
+        ))?;
 
         client.get(url).headers(headers).send().map_err(Into::into)
     } else {
@@ -299,7 +298,7 @@ fn get_http_response(
     client: &Client,
     uri: &str,
     cache_csv_last_modified: Option<SystemTime>,
-) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
+) -> anyhow::Result<reqwest::blocking::Response> {
     let mut headers = reqwest::header::HeaderMap::new();
 
     if let Some(modified) = cache_csv_last_modified {
@@ -329,7 +328,7 @@ fn write_cache_file(
     last_modified: &str,
     download_start: Instant,
     opts: &LookupTableOptions,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     info!(
         "Writing lookup CSV to cache file: {}",
         cache_file_path.display()
