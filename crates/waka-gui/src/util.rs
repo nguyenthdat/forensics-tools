@@ -297,26 +297,6 @@ pub fn filter_icon_button(ui: &mut Ui, active: bool) -> egui::Response {
     response
 }
 
-pub fn count_rows_for_path(path: &str) -> u64 {
-    let cfg = Config::new(Some(&path.to_string()));
-    // Try index first
-    if let Ok(Some(idx)) = cfg.indexed() {
-        return idx.count();
-    }
-    // Fallback: scan the file (faster: use byte_records to avoid string allocations)
-    if let Ok(mut rdr) = cfg.reader() {
-        let mut cnt: u64 = 0;
-        for rec in rdr.byte_records() {
-            if rec.is_ok() {
-                cnt = cnt.saturating_add(1);
-            }
-        }
-        cnt
-    } else {
-        0
-    }
-}
-
 pub fn close_button(ui: &mut Ui, emphasize: bool) -> egui::Response {
     let desired = egui::vec2(18.0, 18.0);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());

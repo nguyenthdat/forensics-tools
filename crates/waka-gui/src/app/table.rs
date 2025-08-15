@@ -15,12 +15,12 @@ use eframe::egui::{
 };
 use egui_extras::{Column, TableBuilder};
 use epaint::{Color32, CornerRadius, Margin, Stroke};
-use qsv::config::Config;
 use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use ustr::{Ustr, ustr};
+use waka_core::count::{self, Args};
 
 use crate::util;
 
@@ -417,7 +417,9 @@ impl TableEditor {
 
             // count rows once per file (if not already counted)
             if fp.total_rows.is_none() {
-                let total = util::count_rows_for_path(&path_str);
+                let total = count::run(Args::builder().arg_input(&path_str).build())
+                    .unwrap()
+                    .0;
                 fp.total_rows = Some(total);
                 new_total_rows = Some(total as usize); // update self after dropping fp
                 // Clamp page within new total

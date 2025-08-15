@@ -5,7 +5,6 @@ use std::{
     cmp::min,
     collections::HashMap,
     env,
-    fmt::Write as _,
     fs::{self, File},
     io::{BufRead, BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},

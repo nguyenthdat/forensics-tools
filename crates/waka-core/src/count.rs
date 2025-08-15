@@ -11,10 +11,15 @@ use crate::{
 pub struct Args {
     #[builder(into)]
     pub arg_input:            Option<String>,
+    #[builder(default = false)]
     pub flag_width:           bool,
+    #[builder(default = false)]
     pub flag_width_no_delims: bool,
+    #[builder(default = true)]
     pub flag_no_polars:       bool,
+    #[builder(default = true)]
     pub flag_low_memory:      bool,
+    #[builder(default = false)]
     pub flag_flexible:        bool,
     #[builder(default = true)]
     pub flag_no_headers:      bool,
