@@ -17,26 +17,32 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["preserve_order"] }
 simdutf8.workspace = true
 smallvec.workspace = true
-libc = "0.2.175"
 num_cpus.workspace = true
 csv.workspace = true
-docopt = "1.1.1"
-filetime = "0.2.25"
-zip = "4.3.0"
-sysinfo = "0.37.0"
-log.workspace = true
-qsv-sniffer = "0.11.0"
-reqwest = "0.12.23"
 tempfile.workspace = true
-simd-json = "0.15.1"
-directories = "6.0.0"
 chrono = { workspace = true, features = ["serde"] }
-foldhash = "0.1.5"
-csv-index = "0.1.6"
-tracing.workspace = true
-snap = "1.1.1"
-rust_decimal = "1.37.2"
-dotenvy = "0.15.7"
-ryu = "1.0.20"
-phf = "0.12.1"
-futures-util = "0.3.31"
+tracing = { workspace = true, features = ["log"] }
+polars.workspace = true
+polars-ops.workspace = true
+polars-utils.workspace = true
+mlua.workspace = true
+snap.workspace = true
+rust_decimal.workspace = true
+dotenvy.workspace = true
+ryu.workspace = true
+phf.workspace = true
+futures-util.workspace = true
+foldhash.workspace = true
+csv-index.workspace = true
+simd-json.workspace = true
+directories.workspace = true
+qsv-sniffer.workspace = true
+reqwest.workspace = true
+docopt.workspace = true
+filetime.workspace = true
+zip.workspace = true
+sysinfo.workspace = true
+libc.workspace = true
+tracing-subscriber = { workspace = true, features = ["time"] }
+tracing-appender.workspace = true
+tracing-log.workspace = true

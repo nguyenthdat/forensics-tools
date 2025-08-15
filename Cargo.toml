@@ -22,10 +22,8 @@ thiserror = "2.0.14"
 regex = "1.11.1"
 chrono = { version = "0.4", default-features = false }
 rand = "0.9.2"
-
 mimalloc = "0.1.47"
 ustr = { version = "1.1.0", features = ["serde"] }
-
 assert_cmd = "2.0"
 bitflags = "2.9.1"
 byteorder = "1"
@@ -46,7 +44,24 @@ rayon = "1.10.0"
 lexical-core = "1.0.5"
 simdutf8 = "0.1.5"
 smallvec = "1.15.1"
-
+mlua = "0.11.2"
+snap = "1.1.1"
+rust_decimal = "1.37.2"
+dotenvy = "0.15.7"
+ryu = "1.0.20"
+phf = "0.12.1"
+futures-util = "0.3.31"
+foldhash = "0.1.5"
+csv-index = "0.1.6"
+simd-json = "0.15.1"
+directories = "6.0.0"
+qsv-sniffer = "0.11.0"
+reqwest = "0.12.23"
+docopt = "1.1.1"
+filetime = "0.2.25"
+zip = "4.3.0"
+sysinfo = "0.37.0"
+libc = "0.2.175"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -60,6 +75,8 @@ tracing-subscriber = { version = "0.3.19", features = [
     "tracing-log",
 ] }
 log = { version = "0.4.27" }
+tracing-appender = "0.2.3"
+tracing-log = "0.2.0"
 
 time = { version = "0.3.41", features = [
     "serde",
@@ -72,15 +89,15 @@ time = { version = "0.3.41", features = [
     "quickcheck",
     "formatting",
 ] }
-
-bon = { version = "3.6.5" }
+bon = "3.6.5"
 num_cpus = "1.17.0"
 speedate = "0.17.0"
 csv = "1"
 
-tantivy = { version = "0.24.2" }
+tantivy = "0.24.2"
 tantivy-query-grammar = "0.24.0"
 tantivy-derive = { git = "https://github.com/nguyenthdat/tantivy-derive.git" }
+
 # rustyline = { version = "17.0.0", features = [
 #     "buffer-redux",
 #     "derive",
@@ -117,7 +134,6 @@ unicode-segmentation = "1.12.0"
 
 polars-ops = { version = "0.50" }
 polars-utils = { version = "0.50" }
-polars = { version = "0.50.0", features = ["full"] }
 polars-sql = { version = "0.50.0", default-features = false, features = [
     "csv",
     "json",
@@ -126,6 +142,40 @@ polars-sql = { version = "0.50.0", default-features = false, features = [
     "timezones",
     "binary_encoding",
     "dtype-decimal",
+] }
+polars = { version = "0.50", features = [
+    "asof_join",
+    "avro",
+    "avx512",
+    "aws",
+    "binary_encoding",
+    "business",
+    # "cloud",
+    "coalesce",
+    "cross_join",
+    "cse",
+    "csv",
+    "decompress",
+    "diagonal_concat",
+    "dtype-array",
+    "dtype-categorical",
+    "dtype-decimal",
+    # "dtype-full",
+    "extract_jsonpath",
+    "iejoin",
+    "ipc",
+    "json",
+    "lazy",
+    "object",
+    "parquet",
+    "performant",
+    "pivot",
+    "semi_anti_join",
+    "serde-lazy",
+    "strings",
+    "string_normalize",
+    "sql",
+    "timezones",
 ] }
 
 criterion = "0.7.0"
@@ -148,33 +198,14 @@ inherits = "release"
 panic = "abort"
 
 [patch.crates-io]
-# use our tweaked fork of csv crate
-# the csv crate underpins a lot of qsv's functionality, so every perf tweak helps
-# the main feature of this csv fork is accelerated UTF-8 validation using the simdutf8 crate
-# non-allocating ByteRecord trim and a non-allocating StringRecord trim_ascii
 csv = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
 csv-core = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
 csv-index = { git = "https://github.com/dathere/rust-csv", branch = "qsv-optimized-non-allocating-byterecord-trim" }
-
-# use our patched fork of csvlens to add natural sort until our PR is merged
 csvlens = { git = "https://github.com/jqnatividad/csvlens", branch = "133-natural-sort" }
-
-# use our patched fork of csvs_convert to bump dependencies until our PR is merged
 csvs_convert = { git = "https://github.com/jqnatividad/csvs_convert", branch = "bump-rust_xlsxwriter-to-0.88" }
-
-# use our patched fork of grex to bump dependencies and Unicode tables from 15 to 16 until our PR is merged
 grex = { git = "https://github.com/jqnatividad/grex", branch = "bumped-dependencies-202502" }
-
-# use our patched fork of json-objects-to-csv to bump deps and to preserve order until our PR is merged
 json-objects-to-csv = { git = "https://github.com/jqnatividad/json-objects-to-csv", branch = "preserve_order_issue_10" }
-
-# use our patched fork of localzone to bump dependencies until our PR is merged
 localzone = { git = "https://github.com/jqnatividad/localzone", branch = "bump-deps-may2025" }
-
-# use v1 branch with unreleased fixes and features
 rust_decimal = { git = "https://github.com/paupino/rust-decimal", branch = "v1" }
-
-# use our patched fork of self_update to bump zip 2 to 4, until our PR is merged
 self_update = { git = "https://github.com/jqnatividad/self_update", branch = "bump-deps-july2025" }
-
 ord_subset = { git = "https://github.com/nguyenthdat/ord_subset", branch = "master" }

@@ -2,7 +2,6 @@
 use std::os::unix::process::ExitStatusExt;
 use std::{
     borrow::Cow,
-    cmp::min,
     collections::HashMap,
     env,
     fmt::Write as _,
@@ -15,28 +14,23 @@ use std::{
     time::SystemTime,
 };
 
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::anyhow;
 use csv::ByteRecord;
 use docopt::Docopt;
 use filetime::FileTime;
-use log::{info, log_enabled};
 use polars::prelude::Schema;
-use reqwest::Client;
-use serde::de::DeserializeOwned;
-#[cfg(any(feature = "feature_capable", feature = "lite"))]
-use serde::de::{Deserialize, Deserializer, Error};
+use serde::de::{Deserialize, DeserializeOwned, Deserializer, Error};
 use sysinfo::System;
+use tracing_subscriber::layer::SubscriberExt as _;
 use zip::read::root_dir_common_filter;
 
-#[cfg(feature = "polars")]
-use crate::cmd::count::polars_count_input;
 use crate::{
-    cmd::stats::{JsonTypes, STATSDATA_TYPES_MAP, StatsData},
-    config,
-    config::{
-        Config, DEFAULT_RDR_BUFFER_CAPACITY, DEFAULT_WTR_BUFFER_CAPACITY, Delimiter, SpecialFormat,
-        get_special_format,
+    cmd::{
+        count::polars_count_input,
+        stats::{JsonTypes, STATSDATA_TYPES_MAP, StatsData},
     },
+    config,
+    config::{Config, DEFAULT_RDR_BUFFER_CAPACITY, Delimiter, SpecialFormat, get_special_format},
     select::SelectColumns,
 };
 
@@ -205,10 +199,10 @@ pub fn njobs(flag_jobs: Option<usize>) -> usize {
             .build_global()
         {
             Err(e) => {
-                log::warn!("Failed to set global thread pool size to {jobs_to_use}: {e}");
+                tracing::warn!("Failed to set global thread pool size to {jobs_to_use}: {e}");
             },
             _ => {
-                log::info!("Using {jobs_to_use} jobs...");
+                tracing::info!("Using {jobs_to_use} jobs...");
             },
         }
         jobs_to_use
@@ -216,58 +210,29 @@ pub fn njobs(flag_jobs: Option<usize>) -> usize {
     *njobs_result
 }
 
-pub fn timeout_secs(timeout: u16) -> Result<u64, String> {
+pub fn timeout_secs(timeout: u16) -> anyhow::Result<u64> {
     let timeout = match env::var("QSV_TIMEOUT") {
         Ok(val) => val.parse::<u16>().unwrap_or(30_u16),
         Err(_) => timeout,
     };
 
     if timeout > 3600 {
-        return fail_format!("Timeout cannot be more than 3,600 seconds (1 hour): {timeout}");
+        return Err(anyhow!(
+            "Timeout cannot be more than 3,600 seconds (1 hour): {timeout}"
+        ));
     } else if timeout == 0 {
-        return fail!("Timeout cannot be zero.");
+        return Err(anyhow!("Timeout cannot be zero."));
     }
-    log::info!("TIMEOUT: {timeout}");
+    tracing::info!("TIMEOUT: {timeout}");
     Ok(timeout as u64)
-}
-
-/// sets custom user agent
-/// if user agent is not set, then use the default user agent
-/// it supports four special LITERALs: $QSV_BIN_NAME, $QSV_VERSION, $QSV_TARGET, $QSV_KIND
-/// and $QSV_COMMAND which will be replaced with the actual values during runtime
-pub fn set_user_agent(user_agent: Option<String>) -> anyhow::Result<String> {
-    use reqwest::header::HeaderValue;
-
-    let ua = match user_agent {
-        Some(ua_arg) => ua_arg,
-        None => env::var("WAKA_USER_AGENT").unwrap_or_else(|_| default_user_agent()),
-    };
-
-    let unknown_command = "Unknown".to_string();
-    let current_command = CURRENT_COMMAND.get().unwrap_or(&unknown_command);
-
-    match HeaderValue::from_str(ua.as_str()) {
-        Ok(_) => (),
-        Err(e) => return Err(anyhow!("Invalid user agent: {ua}. Error: {e}")),
-    }
-
-    log::info!("set user agent: {ua}");
-    Ok(ua)
 }
 
 pub fn version() -> String {
     let mut enabled_features = String::new();
 
-    #[cfg(all(feature = "apply", not(feature = "lite")))]
     enabled_features.push_str("apply;");
-    #[cfg(all(feature = "fetch", not(feature = "lite")))]
-    enabled_features.push_str("fetch;");
-    #[cfg(all(feature = "foreach", not(feature = "lite")))]
     enabled_features.push_str("foreach;");
-    #[cfg(all(feature = "geocode", not(feature = "lite")))]
     enabled_features.push_str("geocode;");
-
-    #[cfg(all(feature = "luau", not(feature = "lite")))]
     {
         let luau = mlua::Lua::new();
         match luau.load("return _VERSION").eval() {
@@ -292,29 +257,16 @@ pub fn version() -> String {
             Err(e) => write!(enabled_features, "Luau - cannot retrieve version: {e};").unwrap(),
         }
     }
-    #[cfg(all(feature = "prompt", feature = "feature_capable"))]
-    enabled_features.push_str("prompt;");
 
-    #[cfg(all(feature = "python", not(feature = "lite")))]
-    {
-        enabled_features.push_str("python-");
-        pyo3::Python::with_gil(|py| {
-            enabled_features.push_str(py.version());
-            enabled_features.push(';');
-        });
-    }
-    #[cfg(all(feature = "to", not(feature = "lite")))]
     enabled_features.push_str("to;");
     #[allow(clippy::const_is_empty)]
-    #[cfg(all(feature = "polars", not(feature = "lite")))]
     if QSV_POLARS_REV.is_empty() {
         enabled_features.push_str(format!("polars-{};", polars::VERSION).as_str());
     } else {
         enabled_features
             .push_str(format!("polars-{}:{};", polars::VERSION, QSV_POLARS_REV).as_str());
     }
-    #[cfg(feature = "self_update")]
-    enabled_features.push_str("self_update");
+
     enabled_features.push('-');
 
     // get max_file_size & memory info. max_file_size is based on QSV_FREEMEMORY_HEADROOM_PCT
@@ -327,12 +279,8 @@ pub fn version() -> String {
     let free_swap = sys.free_swap();
     let max_file_size = mem_file_check(Path::new(""), true, false).unwrap_or(0) as u64;
 
-    #[cfg(feature = "mimalloc")]
     let malloc_kind = "mimalloc";
-    #[cfg(feature = "jemallocator")]
-    let malloc_kind = "jemalloc";
-    #[cfg(not(any(feature = "mimalloc", feature = "jemallocator")))]
-    let malloc_kind = "standard";
+
     let (qsvtype, maj, min, pat, pre, rustversion) = (
         option_env!("CARGO_BIN_NAME"),
         option_env!("CARGO_PKG_VERSION_MAJOR"),
@@ -351,10 +299,6 @@ pub fn version() -> String {
                  {rustversion})",
                 maxjobs = max_jobs(),
                 numcpus = num_cpus(),
-                max_file_size = indicatif::HumanBytes(max_file_size),
-                free_swap = indicatif::HumanBytes(free_swap),
-                avail_mem = indicatif::HumanBytes(avail_mem),
-                total_mem = indicatif::HumanBytes(total_mem),
             )
         } else {
             format!(
@@ -364,10 +308,6 @@ pub fn version() -> String {
                  {rustversion})",
                 maxjobs = max_jobs(),
                 numcpus = num_cpus(),
-                max_file_size = indicatif::HumanBytes(max_file_size),
-                free_swap = indicatif::HumanBytes(free_swap),
-                avail_mem = indicatif::HumanBytes(avail_mem),
-                total_mem = indicatif::HumanBytes(total_mem),
             )
         }
     } else {
@@ -382,43 +322,25 @@ pub fn show_env_vars() {
     for (n, v) in env::vars_os() {
         // safety: we know that the env::vars_os() will not fail
         let env_var = n.into_string().unwrap();
-        #[cfg(feature = "mimalloc")]
         if env_var.starts_with("QSV_")
             || env_var.starts_with("MIMALLOC_")
             || OTHER_ENV_VARS.contains(&env_var.to_ascii_lowercase().as_str())
         {
             env_var_set = true;
-            woutinfo!("{env_var}: {v:?}");
+            tracing::info!("{env_var}: {v:?}");
         }
-        #[cfg(feature = "jemallocator")]
-        if env_var.starts_with("QSV_")
-            || env_var.starts_with("JEMALLOC_")
-            || env_var.starts_with("MALLOC_CONF")
-            || OTHER_ENV_VARS.contains(&env_var.to_ascii_lowercase().as_str())
-        {
-            env_var_set = true;
-            woutinfo!("{env_var}: {v:?}");
-        }
-        #[cfg(not(any(feature = "mimalloc", feature = "jemallocator")))]
-        if env_var.starts_with("QSV_")
-            || OTHER_ENV_VARS.contains(&env_var.to_ascii_lowercase().as_str())
-        {
-            env_var_set = true;
-            woutinfo!("{env_var}: {v:?}");
-        }
-        #[cfg(feature = "polars")]
         if env_var.starts_with("POLARS_") {
             env_var_set = true;
-            woutinfo!("{env_var}: {v:?}");
+            tracing::info!("{env_var}: {v:?}");
         }
     }
     if !env_var_set {
-        woutinfo!("No qsv-relevant environment variables set.");
+        tracing::info!("No waka-relevant environment variables set.");
     }
 }
 
 #[inline]
-pub fn count_rows(conf: &Config) -> Result<u64, CliError> {
+pub fn count_rows(conf: &Config) -> anyhow::Result<u64> {
     // Check if ROW_COUNT is already initialized to avoid redundant counting
     if let Some(count) = ROW_COUNT.get() {
         return Ok(count.unwrap_or(0));
@@ -440,10 +362,9 @@ pub fn count_rows(conf: &Config) -> Result<u64, CliError> {
             // Try different counting methods in order of preference
             count_rows_with_best_method(conf)
         })
-        .ok_or_else(|| CliError::Other("Unable to get row count".to_string()))
+        .ok_or_else(|| anyhow!("Unable to get row count"))
 }
 
-#[cfg(feature = "polars")]
 fn count_rows_with_best_method(conf: &Config) -> Option<u64> {
     if !conf.no_headers {
         // Try polars first for files with headers
@@ -459,11 +380,6 @@ fn count_rows_with_best_method(conf: &Config) -> Option<u64> {
     }
 
     // Fall back to CSV reader
-    count_with_csv_reader(conf)
-}
-
-#[cfg(not(feature = "polars"))]
-fn count_rows_with_best_method(conf: &Config) -> Option<u64> {
     count_with_csv_reader(conf)
 }
 
@@ -486,7 +402,7 @@ fn count_with_csv_reader(conf: &Config) -> Option<u64> {
 /// we don't use polars mem-mapped reader here
 /// even if it's available
 #[inline]
-pub fn count_rows_regular(conf: &Config) -> Result<u64, CliError> {
+pub fn count_rows_regular(conf: &Config) -> anyhow::Result<u64> {
     if let Some(idx) = conf.indexed().unwrap_or(None) {
         Ok(idx.count())
     } else {
@@ -507,13 +423,12 @@ pub fn count_rows_regular(conf: &Config) -> Result<u64, CliError> {
 
         match *count_opt {
             Some(count) => Ok(count),
-            None => Err(CliError::Other("Unable to get row count".to_string())),
+            None => Err(anyhow!("Unable to get row count")),
         }
     }
 }
 
-#[cfg(any(feature = "feature_capable", feature = "lite"))]
-pub fn count_lines_in_file(file: &str) -> Result<u64, CliError> {
+pub fn count_lines_in_file(file: &str) -> anyhow::Result<u64> {
     let file = File::open(file)?;
     let reader = BufReader::new(file);
 
@@ -521,91 +436,7 @@ pub fn count_lines_in_file(file: &str) -> Result<u64, CliError> {
     Ok(line_count)
 }
 
-pub fn prep_progress(progress: &ProgressBar, record_count: u64) {
-    progress.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] [{wide_bar} {percent}%{msg}] ({per_sec} - {eta})")
-            .unwrap(),
-    );
-    progress.set_message(format!(" of {} records", HumanCount(record_count)));
-
-    // draw progress bar for the first time using specified style
-    progress.set_length(record_count);
-
-    log::info!("Progress started... {record_count} records");
-}
-
-pub fn finish_progress(progress: &ProgressBar) {
-    progress.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] [{wide_bar} {percent}%{msg}] ({per_sec})")
-            .unwrap(),
-    );
-
-    if progress.length().unwrap_or_default() == progress.position() {
-        progress.finish();
-        log::info!("Progress done... {}", progress.message());
-    } else {
-        progress.abandon();
-        log::info!("Progress abandoned... {}", progress.message());
-    }
-}
-
-#[cfg(all(any(feature = "fetch", feature = "geocode"), not(feature = "lite")))]
-macro_rules! update_cache_info {
-    ($progress:expr_2021, $cache_instance:expr_2021) => {
-        use cached::Cached;
-        use indicatif::HumanCount;
-
-        match $cache_instance.lock() {
-            Ok(cache) => {
-                let size = cache.cache_size();
-                if size > 0 {
-                    let hits = cache.cache_hits().unwrap_or_default();
-                    let misses = cache.cache_misses().unwrap_or(1);
-                    #[allow(clippy::cast_precision_loss)]
-                    let hit_ratio = (hits as f64 / (hits + misses) as f64) * 100.0;
-                    let capacity = cache.cache_capacity();
-                    $progress.set_message(format!(
-                        " of {} records. Cache {:.2}% entries: {} capacity: {}.",
-                        HumanCount($progress.length().unwrap()),
-                        hit_ratio,
-                        HumanCount(size as u64),
-                        HumanCount(capacity.unwrap() as u64),
-                    ));
-                }
-            },
-            _ => {},
-        }
-    };
-    ($progress:expr_2021, $cache_hits:expr_2021, $num_rows:expr_2021) => {
-        use indicatif::HumanCount;
-
-        #[allow(clippy::cast_precision_loss)]
-        let hit_ratio = ($cache_hits as f64 / $num_rows as f64) * 100.0;
-        $progress.set_message(format!(
-            " of {} records. Cache hit ratio: {hit_ratio:.2}%",
-            HumanCount($progress.length().unwrap()),
-        ));
-    };
-}
-
-#[cfg(all(any(feature = "fetch", feature = "geocode"), not(feature = "lite")))]
-pub(crate) use update_cache_info;
-
-#[cfg(not(all(any(feature = "fetch", feature = "geocode"), not(feature = "lite"))))]
-#[allow(unused_macros)]
-macro_rules! update_cache_info {
-    ($($tt:tt)*) => {
-        // no-op in builds without fetch/geocode (or with lite)
-    };
-}
-
-#[cfg(not(all(any(feature = "fetch", feature = "geocode"), not(feature = "lite"))))]
-#[allow(unused_imports)]
-pub(crate) use update_cache_info;
-
-pub fn get_args<T>(usage: &str, argv: &[&str]) -> CliResult<T>
+pub fn get_args<T>(usage: &str, argv: &[&str]) -> anyhow::Result<T>
 where
     T: DeserializeOwned,
 {
@@ -624,7 +455,7 @@ pub fn many_configs(
     delim: Option<Delimiter>,
     no_headers: bool,
     flexible: bool,
-) -> Result<Vec<Config>, String> {
+) -> anyhow::Result<Vec<Config>> {
     let mut inps = inps
         .iter()
         .map(|p| p.to_str().unwrap_or("-").to_owned())
@@ -645,10 +476,10 @@ pub fn many_configs(
     Ok(confs)
 }
 
-pub fn errif_greater_one_stdin(inps: &[Config]) -> Result<(), String> {
+pub fn errif_greater_one_stdin(inps: &[Config]) -> anyhow::Result<()> {
     let nstd = inps.iter().filter(|inp| inp.is_stdin()).count();
     if nstd > 1 {
-        return fail!("At most one <stdin> input is allowed.");
+        return Err(anyhow!("At most one <stdin> input is allowed."));
     }
     Ok(())
 }
@@ -689,7 +520,7 @@ pub fn mem_file_check(
     path: &Path,
     version_check: bool,
     conservative_memcheck: bool,
-) -> CliResult<i64> {
+) -> anyhow::Result<i64> {
     // if we're NOT calling this from the version() and the file doesn't exist,
     // we don't need to check memory as file existence is checked before this function is called.
     // If we do get here with a non-existent file, that means we're using stdin,
@@ -698,7 +529,7 @@ pub fn mem_file_check(
         return Ok(-1_i64);
     }
 
-    let conservative_memcheck_work = get_envvar_flag("QSV_MEMORY_CHECK") || conservative_memcheck;
+    let conservative_memcheck_work = get_envvar_flag("WAKA_MEMORY_CHECK") || conservative_memcheck;
 
     let mut mem_pct = env::var("QSV_FREEMEMORY_HEADROOM_PCT")
         .unwrap_or_else(|_| DEFAULT_FREEMEMORY_HEADROOM_PCT.to_string())
@@ -730,10 +561,10 @@ pub fn mem_file_check(
     // if we're calling this from version(), we don't need to check the file size
     if !version_check {
         let file_metadata =
-            fs::metadata(path).map_err(|e| format!("Failed to get file size: {e}"))?;
+            fs::metadata(path).map_err(|e| anyhow!("Failed to get file size: {e}"))?;
         let fsize = file_metadata.len();
         if fsize > max_avail_mem {
-            return fail_OOM_clierror!(
+            return Err(anyhow!(
                 "Not enough memory to process the file. qsv running in non-streaming {mode} mode. \
                  Total memory: {total_mem} Available memory: {avail_mem}. Free swap: {free_swap} \
                  Max Available memory/Max input file size: {max_avail_mem}. \
@@ -743,20 +574,13 @@ pub fn mem_file_check(
                 } else {
                     "NORMAL"
                 },
-                total_mem = indicatif::HumanBytes(total_mem),
-                avail_mem = indicatif::HumanBytes(avail_mem),
-                free_swap = indicatif::HumanBytes(free_swap),
-                max_avail_mem = indicatif::HumanBytes(max_avail_mem),
-                mem_pct = mem_pct,
-                fsize = indicatif::HumanBytes(fsize)
-            );
+            ));
         }
     }
 
     Ok(max_avail_mem as i64)
 }
 
-#[cfg(any(feature = "feature_capable", feature = "lite"))]
 #[inline]
 pub fn condense(val: Cow<[u8]>, n: Option<usize>) -> Cow<[u8]> {
     match n {
@@ -798,21 +622,23 @@ pub fn idx_path(csv_path: &Path) -> PathBuf {
 
 pub type Idx = Option<usize>;
 
-pub fn range(start: Idx, end: Idx, len: Idx, index: Idx) -> Result<(usize, usize), String> {
+pub fn range(start: Idx, end: Idx, len: Idx, index: Idx) -> anyhow::Result<(usize, usize)> {
     match (start, end, len, index) {
         (None, None, None, Some(i)) => Ok((i, i + 1)),
-        (_, _, _, Some(_)) => fail!("--index cannot be used with --start, --end or --len"),
+        (_, _, _, Some(_)) => Err(anyhow!(
+            "--index cannot be used with --start, --end or --len"
+        )),
         (_, Some(_), Some(_), None) => {
-            fail!("--end and --len cannot be used at the same time.")
+            Err(anyhow!("--end and --len cannot be used at the same time."))
         },
         (_, None, None, None) => Ok((start.unwrap_or(0), usize::MAX)),
         (_, Some(e), None, None) => {
             let s = start.unwrap_or(0);
             if s > e {
-                fail_format!(
+                Err(anyhow!(
                     "The end of the range ({e}) must be greater than or\nequal to the start of \
                      the range ({s})."
-                )
+                ))
             } else {
                 Ok((s, e))
             }
@@ -826,14 +652,12 @@ pub fn range(start: Idx, end: Idx, len: Idx, index: Idx) -> Result<(usize, usize
 
 /// Represents a filename template of the form `"{}.csv"`, where `"{}"` is
 /// the place to insert the part of the filename generated by `qsv`.
-#[cfg(any(feature = "feature_capable", feature = "lite"))]
 #[derive(Clone)]
 pub struct FilenameTemplate {
     prefix: String,
     suffix: String,
 }
 
-#[cfg(any(feature = "feature_capable", feature = "lite"))]
 impl FilenameTemplate {
     /// Generate a new filename using `unique_value` to replace the `"{}"`
     /// in the template.
@@ -863,7 +687,6 @@ impl FilenameTemplate {
     }
 }
 
-#[cfg(any(feature = "feature_capable", feature = "lite"))]
 impl<'de> Deserialize<'de> for FilenameTemplate {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<FilenameTemplate, D::Error> {
         let raw = String::deserialize(d)?;
@@ -881,47 +704,78 @@ impl<'de> Deserialize<'de> for FilenameTemplate {
     }
 }
 
-pub fn init_logger() -> anyhow::Result<(String, flexi_logger::LoggerHandle)> {
-    use flexi_logger::{Cleanup, Criterion, FileSpec, Logger, Naming};
+pub fn init_logger() -> anyhow::Result<(String, Option<tracing_appender::non_blocking::WorkerGuard>)>
+{
+    use std::fs;
 
-    let qsv_log_env = env::var("QSV_LOG_LEVEL").unwrap_or_else(|_| "off".to_string());
-    let qsv_log_dir = env::var("QSV_LOG_DIR").unwrap_or_else(|_| ".".to_string());
-    let write_mode = if get_envvar_flag("QSV_LOG_UNBUFFERED") {
-        flexi_logger::WriteMode::Direct
+    use tracing_log::LogTracer;
+    use tracing_subscriber::{EnvFilter, fmt};
+
+    // If logging is off, do nothing.
+    let level = env::var("WAKA_LOG_LEVEL").unwrap_or_else(|_| "off".to_string());
+    if level.eq_ignore_ascii_case("off") {
+        // still install the LogTracer so `log` macros are routed (but no subscriber = no output)
+        let _ = LogTracer::init();
+        let qsv_args = String::new();
+        return Ok((qsv_args, None));
+    }
+
+    let log_dir = env::var("WAKA_LOG_DIR").unwrap_or_else(|_| ".".to_string());
+    fs::create_dir_all(&log_dir)
+        .map_err(|e| anyhow!("Failed to create WAKA_LOG_DIR '{}': {e}", log_dir))?;
+
+    // Bridge `log` crate macros (log::info!, log::debug!, log_enabled!, etc.) to tracing
+    let _ = LogTracer::init();
+
+    // Build the filter from WAKA_LOG_LEVEL (e.g., "info", "debug", "warn", with optional module
+    // filters)
+    let env_filter = EnvFilter::try_new(&level).unwrap_or_else(|_| EnvFilter::new("info"));
+
+    // Rolling file appender (daily). File name matches the binary name, similar to flexi_logger
+    // default. Note: this changes rotation policy from size-based to time-based (daily).
+    let file_name = format!("{CARGO_BIN_NAME}.log");
+    let appender = tracing_appender::rolling::daily(&log_dir, file_name);
+
+    // Honor WAKA_LOG_UNBUFFERED: use blocking (direct) writer vs. non-blocking background writer.
+    let (make_writer, guard_opt) = if get_envvar_flag("WAKA_LOG_UNBUFFERED") {
+        (
+            // Type-erased writer
+            tracing_subscriber::fmt::writer::BoxMakeWriter::new(appender),
+            None,
+        )
     } else {
-        flexi_logger::WriteMode::BufferAndFlush
+        let (nb, guard) = tracing_appender::non_blocking(appender);
+        (
+            tracing_subscriber::fmt::writer::BoxMakeWriter::new(nb),
+            Some(guard),
+        )
     };
 
-    let logger_handle = Logger::try_with_env_or_str(qsv_log_env);
+    // UTC timestamps similar to .use_utc()
+    let timer = tracing_subscriber::fmt::time::UtcTime::rfc_3339();
 
-    match logger_handle {
-        Ok(logger) => {
-            let logger = logger
-                .use_utc()
-                .log_to_file(
-                    FileSpec::default()
-                        .directory(qsv_log_dir)
-                        .suppress_timestamp(),
-                )
-                .write_mode(write_mode)
-                .format_for_files(flexi_logger::detailed_format)
-                .o_append(true)
-                .rotate(
-                    Criterion::Size(20_000_000), // 20 mb
-                    Naming::Numbers,
-                    Cleanup::KeepLogAndCompressedFiles(10, 100),
-                )
-                .start()?;
-            let qsv_args: String = if log_enabled!(log::Level::Info) {
-                env::args().skip(1).collect::<Vec<_>>().join(" ")
-            } else {
-                String::new()
-            };
-            log::info!("START: {qsv_args}");
-            Ok((qsv_args, logger))
-        },
-        Err(e) => Err(CliError::Other(format!("Failed to initialize logger: {e}"))),
-    }
+    // Build and install the global subscriber
+    let subscriber = tracing_subscriber::registry().with(env_filter).with(
+        fmt::layer()
+            .with_timer(timer)
+            .with_ansi(false)
+            .with_writer(make_writer)
+            .with_level(true)
+            .with_target(true),
+    );
+
+    tracing::subscriber::set_global_default(subscriber)
+        .map_err(|e| anyhow!("Failed to set global tracing subscriber: {e}"))?;
+
+    // Only capture args if info is enabled
+    let qsv_args: String = if tracing::enabled!(tracing::Level::INFO) {
+        env::args().skip(1).collect::<Vec<_>>().join(" ")
+    } else {
+        String::new()
+    };
+
+    tracing::info!("START: {qsv_args}");
+    Ok((qsv_args, guard_opt))
 }
 
 pub fn safe_header_names(
@@ -982,7 +836,7 @@ pub fn safe_header_names(
             }
 
             safename_candidate = if reserved_found {
-                log::warn!("\"{safename_always}\" is a reserved name: {reserved_names:?}");
+                tracing::warn!("\"{safename_always}\" is a reserved name: {reserved_names:?}");
                 format!("reserved_{safename_always}")
             } else {
                 safename_always
@@ -1017,7 +871,7 @@ pub fn safe_header_names(
         }
         name_vec.push(candidate_name);
     }
-    log::debug!("safe header names: {name_vec:?}");
+    tracing::debug!("safe header names: {name_vec:?}");
     (name_vec, changed_count)
 }
 
@@ -1046,14 +900,14 @@ pub fn log_end(mut qsv_args: String, now: std::time::Instant) {
         // to avoid panics if the directory is already deleted.
         std::fs::remove_dir_all(temp_dir).unwrap_or_default();
     }
-    if log::log_enabled!(log::Level::Info) {
+    if tracing::enabled!(tracing::Level::INFO) {
         let ellipsis = if qsv_args.len() > 24 {
             utf8_truncate(&mut qsv_args, 24);
             "..."
         } else {
             ""
         };
-        log::info!(
+        tracing::info!(
             "END \"{qsv_args}{ellipsis}\" elapsed: {}",
             now.elapsed().as_secs_f32()
         );
@@ -1297,7 +1151,7 @@ pub fn load_dotenv() -> anyhow::Result<()> {
         qsv_binary_envprofile.set_file_name(format!("{qsv_binary_filestem}.env"));
 
         if std::path::Path::new(&qsv_binary_envprofile).exists() {
-            log::info!(
+            tracing::info!(
                 "Using binary .env file: {}",
                 qsv_binary_envprofile.display()
             );
@@ -1347,12 +1201,12 @@ fn is_valid_snappy_file(path: &PathBuf) -> anyhow::Result<bool> {
     match decoder.take(50).read_to_end(&mut buffer) {
         Ok(_) => {
             // Successfully read some bytes, this is likely a valid Snappy file
-            log::debug!("File {} appears to be a valid Snappy file", path.display());
+            tracing::debug!("File {} appears to be a valid Snappy file", path.display());
             Ok(true)
         },
         Err(e) => {
             // Failed to read, this is not a valid Snappy file
-            log::debug!("File {} is not a valid Snappy file: {}", path.display(), e);
+            tracing::debug!("File {} is not a valid Snappy file: {}", path.display(), e);
             Ok(false)
         },
     }
@@ -1385,7 +1239,7 @@ Consider renaming the file or using a different input."#,
     match std::io::copy(&mut snappy_reader, &mut decompressed_file) {
         Ok(num_bytes) => {
             decompressed_file.flush()?;
-            log::debug!(
+            tracing::debug!(
                 "Successfully decompressed Snappy file: {} ({} bytes)",
                 path.display(),
                 num_bytes
@@ -1512,7 +1366,7 @@ pub fn process_input(
                             // file, not just the first one.
                             invalid_files += 1;
                             canonical_invalid_path = path.canonicalize().unwrap_or_default();
-                            log::warn!(
+                            tracing::warn!(
                                 ".infile-list file '{}': '{}' does not exist",
                                 path.display(),
                                 canonical_invalid_path.display()
@@ -1521,7 +1375,7 @@ pub fn process_input(
                         }
                     })
                     .collect::<Vec<_>>();
-                log::info!(
+                tracing::info!(
                     ".infile-list file parsed. Filecount - valid:{} invalid:{invalid_files}",
                     infile_list_vec.len()
                 );
@@ -1584,7 +1438,7 @@ pub fn process_input(
             == Some("zip".to_string())
         {
             // if so, extract all files from the zip archive to the temp directory
-            log::info!("Extracting files from zip archive: {}", path.display());
+            tracing::info!("Extracting files from zip archive: {}", path.display());
 
             // Create a subdirectory in the temp directory for this zip file
             // safety: we know the path has a filename
@@ -1610,7 +1464,7 @@ pub fn process_input(
                 if entry_path.ends_with('/')
                     || !root_dir_common_filter(std::path::Path::new(&entry_path))
                 {
-                    log::info!("  Skipping system file or directory: {entry_path}");
+                    tracing::info!("  Skipping system file or directory: {entry_path}");
                     continue;
                 }
 
@@ -1626,17 +1480,17 @@ pub fn process_input(
                 let mut outfile = std::fs::File::create(&file_path)?;
                 std::io::copy(&mut zip_entry, &mut outfile)?;
 
-                log::info!("  Extracted file: {}", file_path.display());
+                tracing::info!("  Extracted file: {}", file_path.display());
 
                 // Add the extracted file to the processed input if it's a supported format
                 if is_supported_file(&file_path) {
                     processed_input.push(file_path);
                 } else {
-                    log::info!("  Skipping unsupported file type: {}", file_path.display());
+                    tracing::info!("  Skipping unsupported file type: {}", file_path.display());
                 }
             }
 
-            log::info!("Extracted {} files from zip archive", archive.len());
+            tracing::info!("Extracted {} files from zip archive", archive.len());
         } else {
             processed_input.push(path);
         }
@@ -1650,7 +1504,7 @@ pub fn process_input(
         }
         return Err(anyhow!("{custom_empty_stdin_errmsg}"));
     }
-    log::debug!("processed input file/s: {processed_input:?}");
+    tracing::debug!("processed input file/s: {processed_input:?}");
     Ok(processed_input)
 }
 
@@ -1914,14 +1768,16 @@ pub fn get_stats_records(
         let statsdata_mtime = FileTime::from_last_modification_time(&statsdata_metadata);
         let input_mtime = FileTime::from_last_modification_time(&input_metadata);
         if statsdata_mtime > input_mtime {
-            info!("Valid stats.csv.data.jsonl file found!");
+            tracing::info!("Valid stats.csv.data.jsonl file found!");
             true
         } else {
-            info!("stats.csv.data.jsonl file is older than input file. Regenerating stats jsonl.");
+            tracing::info!(
+                "stats.csv.data.jsonl file is older than input file. Regenerating stats jsonl."
+            );
             false
         }
     } else {
-        info!(
+        tracing::info!(
             "stats.csv.data.jsonl file does not exist: {}",
             statsdata_path.display()
         );
@@ -2424,7 +2280,7 @@ pub fn convert_special_format(
                 df
             } else {
                 // Got an error. Try again with a larger infer schema length of 10,000 rows
-                log::warn!(
+                tracing::warn!(
                     "Falling back to reading file \"{}\" without a schema. 2nd try using infer \
                      schema length of 10,000 rows.",
                     path.display()
@@ -2437,7 +2293,9 @@ pub fn convert_special_format(
                 if let Ok(df) = reader_2ndtry.finish() {
                     df
                 } else {
-                    log::warn!("Still failing. 3rd try - scanning the whole file to infer schema.");
+                    tracing::warn!(
+                        "Still failing. 3rd try - scanning the whole file to infer schema."
+                    );
 
                     // Try one last time without an infer schema length, scanning the whole file
                     let reader_3rdtry = CsvReadOptions::default()
@@ -2484,11 +2342,11 @@ pub fn convert_special_format(
 }
 
 pub fn infer_polars_schema(
-    delimiter: Option<crate::config::Delimiter>,
+    delimiter: Option<config::Delimiter>,
     debuglog_flag: bool,
     table: &Path,
     schema_file: &std::path::PathBuf,
-) -> Result<bool, crate::clitypes::CliError> {
+) -> anyhow::Result<bool> {
     let schema_args = SchemaArgs {
         flag_enum_threshold:  0,
         flag_ignore_case:     false,
@@ -2591,7 +2449,7 @@ pub fn infer_polars_schema(
     file.write_all(stats_schema_json.as_bytes())?;
     file.flush()?;
     if debuglog_flag {
-        log::debug!("Saved stats_schema to file: {}", schema_file.display());
+        tracing::debug!("Saved stats_schema to file: {}", schema_file.display());
     }
     Ok(true)
 }

@@ -10568,6 +10568,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracing-appender"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3566e8ce28cc0a3fe42519fc80e6b4c943cc4c8cef275620eb8dac2d3d4e06cf"
+dependencies = [
+ "crossbeam-channel",
+ "thiserror 1.0.69",
+ "time",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "tracing-attributes"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10612,6 +10624,7 @@ dependencies = [
  "sharded-slab",
  "smallvec",
  "thread_local",
+ "time",
  "tracing",
  "tracing-core",
  "tracing-log",
@@ -11119,10 +11132,13 @@ dependencies = [
  "foldhash",
  "futures-util",
  "libc",
- "log",
  "mft",
+ "mlua",
  "num_cpus",
  "phf 0.12.1",
+ "polars",
+ "polars-ops",
+ "polars-utils",
  "qsv-sniffer",
  "rayon",
  "regex",
@@ -11138,6 +11154,9 @@ dependencies = [
  "sysinfo 0.37.0",
  "tempfile",
  "tracing",
+ "tracing-appender",
+ "tracing-log",
+ "tracing-subscriber",
  "zip",
 ]
 
