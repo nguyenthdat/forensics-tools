@@ -1,3 +1,0 @@
-[submodule "crates/qsv"]
-	path = crates/qsv
-	url = https://github.com/nguyenthdat/qsv.git

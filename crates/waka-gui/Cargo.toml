@@ -12,11 +12,6 @@ name = "gwaka"
 path = "src/main.rs"
 
 [dependencies]
-qsv = { workspace = true, default-features = false, features = [
-    "distrib_features",
-    "polars",
-] }
-
 anyhow.workspace = true
 
 eframe = { workspace = true, features = ["persistence", "serde", "wgpu"] }
