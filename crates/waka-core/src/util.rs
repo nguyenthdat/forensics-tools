@@ -2,11 +2,11 @@
 use std::os::unix::process::ExitStatusExt;
 use std::{
     borrow::Cow,
+    cmp::min,
     collections::HashMap,
     env,
     fmt::Write as _,
-    fs,
-    fs::File,
+    fs::{self, File},
     io::{BufRead, BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
     str,
@@ -19,14 +19,17 @@ use csv::ByteRecord;
 use docopt::Docopt;
 use filetime::FileTime;
 use polars::prelude::Schema;
+use reqwest::Client;
 use serde::de::{Deserialize, DeserializeOwned, Deserializer, Error};
 use sysinfo::System;
 use tracing_subscriber::layer::SubscriberExt as _;
 use zip::read::root_dir_common_filter;
 
 use crate::{
-    config,
-    config::{Config, DEFAULT_RDR_BUFFER_CAPACITY, Delimiter, SpecialFormat, get_special_format},
+    config::{
+        self, Config, DEFAULT_RDR_BUFFER_CAPACITY, DEFAULT_WTR_BUFFER_CAPACITY, Delimiter,
+        SpecialFormat, get_special_format,
+    },
     count::polars_count_input,
     select::SelectColumns,
     stats::{self, JsonTypes, STATSDATA_TYPES_MAP, StatsData},
@@ -2448,4 +2451,69 @@ pub fn infer_polars_schema(
         tracing::debug!("Saved stats_schema to file: {}", schema_file.display());
     }
     Ok(true)
+}
+
+#[bon::builder]
+pub async fn download_file(
+    url: &str,
+    path: PathBuf,
+    download_timeout: Option<u16>,
+    sample_size: Option<u64>,
+) -> anyhow::Result<()> {
+    use futures_util::StreamExt;
+
+    let download_timeout = match download_timeout {
+        Some(t) => std::time::Duration::from_secs(timeout_secs(t).unwrap_or(30)),
+        None => std::time::Duration::from_secs(30),
+    };
+
+    // setup the reqwest client
+    let client = match Client::builder()
+        .brotli(true)
+        .gzip(true)
+        .deflate(true)
+        .zstd(true)
+        .use_rustls_tls()
+        .http2_adaptive_window(true)
+        .connection_verbose(
+            tracing::enabled!(tracing::Level::DEBUG) || tracing::enabled!(tracing::Level::TRACE),
+        )
+        .read_timeout(download_timeout)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(anyhow!("Cannot build reqwest client: {e}."));
+        },
+    };
+
+    let res = client.get(url).send().await?;
+
+    let total_size = match res.content_length() {
+        Some(l) => l,
+        None => {
+            // if we can't get the content length, set it to sentinel value
+            u64::MAX
+        },
+    };
+
+    let sample_size = sample_size.unwrap_or(0);
+
+    // download chunks
+    let mut file = BufWriter::with_capacity(DEFAULT_WTR_BUFFER_CAPACITY, File::create(path)?);
+    let mut downloaded: u64 = 0;
+    let mut stream = res.bytes_stream();
+
+    while let Some(item) = stream.next().await {
+        let chunk = item?;
+        file.write_all(&chunk)?;
+        let new = min(downloaded + (chunk.len() as u64), total_size);
+        downloaded = new;
+
+        if sample_size > 0 && downloaded >= sample_size {
+            break;
+        }
+    }
+
+    Ok(file.flush()?)
 }
