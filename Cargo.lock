@@ -11091,6 +11091,7 @@ name = "waka-core"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "arboard",
  "atoi_simd",
  "chrono",
  "crossbeam-channel",

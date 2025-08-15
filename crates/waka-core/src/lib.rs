@@ -1,3 +1,4 @@
+pub mod clipboard;
 pub mod config;
 pub mod count;
 pub mod dedup;
