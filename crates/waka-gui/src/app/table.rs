@@ -135,6 +135,55 @@ impl Default for TableEditor {
 }
 
 impl TableEditor {
+    const CELL_FONT_SIZE: f32 = 12.0;
+    // -------------------------
+    // UI constants (single source of truth)
+    // -------------------------
+    const DEFAULT_COL_WIDTH: f32 = 180.0;
+    const FILTER_CONTROLS_WIDTH: f32 = 56.0;
+    const HEADER_FONT_SIZE: f32 = 12.0;
+    const HEADER_HEIGHT: f32 = 22.0;
+    const ROW_HEIGHT: f32 = 20.0;
+
+    // -------------------------
+    // Helpers for paging & indices composition
+    // -------------------------
+
+    /// Compose the effective list of row indices from the overlay sort and active filters
+    /// while preserving the user-visible sort order when both are present.
+    #[inline]
+    fn compose_indices(fp: &FilePreview) -> Option<Vec<u64>> {
+        match (fp.sorted_indices.as_ref(), fp.filtered_indices.as_ref()) {
+            (Some(sort), Some(filt)) => {
+                let set: std::collections::HashSet<u64> = filt.iter().copied().collect();
+                let mut v: Vec<u64> = Vec::with_capacity(filt.len());
+                for &i in sort.iter() {
+                    if set.contains(&i) {
+                        v.push(i);
+                    }
+                }
+                Some(v)
+            },
+            (Some(sort), None) => Some(sort.clone()),
+            (None, Some(filt)) => Some(filt.clone()),
+            (None, None) => None,
+        }
+    }
+
+    /// Clamp a page index to valid bounds for a given `total_rows` and `rows_per_page`.
+    #[inline]
+    fn clamp_page(page: usize, rows_per_page: usize, total_rows: usize) -> usize {
+        if rows_per_page == 0 || total_rows == 0 {
+            return 0;
+        }
+        let total_pages = total_rows.div_ceil(rows_per_page);
+        if page >= total_pages {
+            total_pages - 1
+        } else {
+            page
+        }
+    }
+
     /// Render the preview table with a header that stays pinned vertically
     /// while sharing the same horizontal scroll as the body.
     pub fn show_preview_table(&mut self, ui: &mut Ui) {
@@ -148,7 +197,7 @@ impl TableEditor {
             ),
             None => return,
         };
-        let col_width: f32 = 180.0;
+        let col_width: f32 = Self::DEFAULT_COL_WIDTH;
         let ncols = headers.len().max(1);
 
         // One table with header + scrollable body so column widths stay in sync
@@ -170,12 +219,12 @@ impl TableEditor {
                     }
 
                     // Header (pinned)
-                    let table = tbl.header(22.0, |mut header| {
+                    let table = tbl.header(Self::HEADER_HEIGHT, |mut header| {
                         for (ci, h) in headers.iter().enumerate() {
                             header.col(|ui| {
                                 // Allocate a single row area and split into: [label        |   controls]
                                 let avail = ui.available_width().max(0.0);
-                                let controls_w = 56.0; // reserve space so Filter + ▲▼ are not clipped
+                                let controls_w = Self::FILTER_CONTROLS_WIDTH; // reserve space so Filter + ▲▼ are not clipped
                                 let label_w = (avail - controls_w).max(0.0);
                                 ui.allocate_ui_with_layout(
                                     egui::vec2(avail, 20.0),
@@ -185,7 +234,7 @@ impl TableEditor {
                                         let header_label = egui::Label::new(
                                             RichText::new(h.as_str())
                                                 .strong()
-                                                .size(12.0)
+                                                .size(Self::HEADER_FONT_SIZE)
                                                 .color(Color32::WHITE),
                                         )
                                         .truncate();
@@ -358,7 +407,7 @@ impl TableEditor {
                     });
 
                     // Body (scrolls under the pinned header; widths stay in sync with header)
-                    let row_h = 20.0;
+                    let row_h = Self::ROW_HEIGHT;
                     table.body(|body| {
                         if let Some(fp_ref) = self.current_fp() {
                             let rows_ref = &fp_ref.preview_rows;
@@ -367,7 +416,7 @@ impl TableEditor {
                                 for ci in 0..ncols {
                                     row.col(|ui| {
                                         let txt = r.get(ci).map(|s| s.as_str()).unwrap_or("");
-                                        let label = egui::Label::new(RichText::new(txt).size(12.0))
+                                        let label = egui::Label::new(RichText::new(txt).size(Self::CELL_FONT_SIZE))
                                             .truncate();
                                         ui.add_sized(
                                             egui::vec2(ui.available_width(), row_h - 2.0),
@@ -432,56 +481,17 @@ impl TableEditor {
                 fp.total_rows = Some(total);
                 new_total_rows = Some(total as usize); // update self after dropping fp
                 // Clamp page within new total
-                let total_pages =
-                    ((total as usize).saturating_add(rows_per_page - 1)) / rows_per_page;
-                if total_pages == 0 {
-                    new_page = 0;
-                } else if new_page >= total_pages {
-                    new_page = total_pages - 1;
-                }
+                new_page = Self::clamp_page(new_page, rows_per_page, total as usize);
             } else {
                 new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
             }
 
             // Compose effective indices from overlay sort and filters (if any).
-            let composed: Option<Vec<u64>>;
-            let eff_slice: Option<&[u64]>;
-            match (fp.sorted_indices.as_ref(), fp.filtered_indices.as_ref()) {
-                (Some(sort), Some(filt)) => {
-                    let set: std::collections::HashSet<u64> = filt.iter().copied().collect();
-                    let mut v: Vec<u64> = Vec::with_capacity(filt.len());
-                    for &i in sort.iter() {
-                        if set.contains(&i) {
-                            v.push(i);
-                        }
-                    }
-                    composed = Some(v);
-                    eff_slice = composed.as_deref();
-                },
-                (Some(sort), None) => {
-                    eff_slice = Some(sort.as_slice());
-                },
-                (None, Some(filt)) => {
-                    eff_slice = Some(filt.as_slice());
-                },
-                (None, None) => {
-                    eff_slice = None;
-                },
-            }
-
-            if let Some(slice_all) = eff_slice {
+            let eff_slice_vec = Self::compose_indices(fp);
+            if let Some(slice_all) = eff_slice_vec.as_deref() {
                 let total = slice_all.len();
                 new_total_rows = Some(total);
-                let total_pages = if rows_per_page == 0 {
-                    0
-                } else {
-                    total.div_ceil(rows_per_page)
-                };
-                if total_pages == 0 {
-                    new_page = 0;
-                } else if new_page >= total_pages {
-                    new_page = total_pages - 1;
-                }
+                new_page = Self::clamp_page(new_page, rows_per_page, total);
 
                 let start_idx = new_page.saturating_mul(rows_per_page);
                 let end_idx = (start_idx + rows_per_page).min(total);
@@ -558,57 +568,17 @@ impl TableEditor {
                         fp.total_rows = Some(total);
                         new_total_rows = Some(total as usize); // update self after dropping fp
                         // Clamp page within new total
-                        let total_pages =
-                            ((total as usize).saturating_add(rows_per_page - 1)) / rows_per_page;
-                        if total_pages == 0 {
-                            new_page = 0;
-                        } else if new_page >= total_pages {
-                            new_page = total_pages - 1;
-                        }
+                        new_page = Self::clamp_page(new_page, rows_per_page, total as usize);
                     } else {
                         new_total_rows = Some(fp.total_rows.unwrap_or(0) as usize);
                     }
 
                     // Compose effective indices from overlay sort and filters (if any).
-                    let composed: Option<Vec<u64>>;
-                    let eff_slice: Option<&[u64]>;
-                    match (fp.sorted_indices.as_ref(), fp.filtered_indices.as_ref()) {
-                        (Some(sort), Some(filt)) => {
-                            let set: std::collections::HashSet<u64> =
-                                filt.iter().copied().collect();
-                            let mut v: Vec<u64> = Vec::with_capacity(filt.len());
-                            for &i in sort.iter() {
-                                if set.contains(&i) {
-                                    v.push(i);
-                                }
-                            }
-                            composed = Some(v);
-                            eff_slice = composed.as_deref();
-                        },
-                        (Some(sort), None) => {
-                            eff_slice = Some(sort.as_slice());
-                        },
-                        (None, Some(filt)) => {
-                            eff_slice = Some(filt.as_slice());
-                        },
-                        (None, None) => {
-                            eff_slice = None;
-                        },
-                    }
-
-                    if let Some(slice_all) = eff_slice {
+                    let eff_slice_vec = Self::compose_indices(fp);
+                    if let Some(slice_all) = eff_slice_vec.as_deref() {
                         let total = slice_all.len();
                         new_total_rows = Some(total);
-                        let total_pages = if rows_per_page == 0 {
-                            0
-                        } else {
-                            total.div_ceil(rows_per_page)
-                        };
-                        if total_pages == 0 {
-                            new_page = 0;
-                        } else if new_page >= total_pages {
-                            new_page = total_pages - 1;
-                        }
+                        new_page = Self::clamp_page(new_page, rows_per_page, total);
 
                         let start_idx = new_page.saturating_mul(rows_per_page);
                         let end_idx = (start_idx + rows_per_page).min(total);

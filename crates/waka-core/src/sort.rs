@@ -1,12 +1,11 @@
 use std::{cmp, str::FromStr};
 
 use anyhow::anyhow;
-// use fastrand; //DevSkim: ignore DS148264
+use bon::Builder;
 use rand::{Rng, SeedableRng, rngs::StdRng, seq::SliceRandom};
 use rand_hc::Hc128Rng;
 use rand_xoshiro::Xoshiro256Plus;
 use rayon::slice::ParallelSliceMut;
-use serde::Deserialize;
 use simdutf8::basic::from_utf8;
 use strum_macros::EnumString;
 
@@ -18,36 +17,36 @@ use crate::{
     util,
 };
 
-#[derive(Deserialize)]
-struct Args {
-    arg_input:        Option<String>,
-    flag_select:      SelectColumns,
-    flag_numeric:     bool,
-    flag_natural:     bool,
-    flag_reverse:     bool,
-    flag_ignore_case: bool,
-    flag_unique:      bool,
-    flag_random:      bool,
-    flag_seed:        Option<u64>,
-    flag_rng:         String,
-    flag_jobs:        Option<usize>,
-    flag_faster:      bool,
-    flag_output:      Option<String>,
-    flag_no_headers:  bool,
-    flag_delimiter:   Option<Delimiter>,
-    flag_memcheck:    bool,
+#[derive(Clone, Debug, Builder)]
+#[builder(derive(Clone))]
+pub struct Args {
+    pub arg_input:        Option<String>,
+    pub flag_select:      SelectColumns,
+    pub flag_numeric:     bool,
+    pub flag_natural:     bool,
+    pub flag_reverse:     bool,
+    pub flag_ignore_case: bool,
+    pub flag_unique:      bool,
+    pub flag_random:      bool,
+    pub flag_seed:        Option<u64>,
+    pub flag_rng:         String,
+    pub flag_jobs:        Option<usize>,
+    pub flag_faster:      bool,
+    pub flag_output:      Option<String>,
+    pub flag_no_headers:  bool,
+    pub flag_delimiter:   Option<Delimiter>,
+    pub flag_memcheck:    bool,
 }
 
 #[derive(Debug, EnumString, PartialEq)]
 #[strum(ascii_case_insensitive)]
-enum RngKind {
+pub enum RngKind {
     Standard,
     Faster,
     Cryptosecure,
 }
 
-pub fn run(argv: &[&str]) -> anyhow::Result<()> {
-    let args: Args = util::get_args("", argv)?;
+pub fn run(args: Args) -> anyhow::Result<()> {
     let numeric = args.flag_numeric;
     let natural = args.flag_natural;
     let reverse = args.flag_reverse;
