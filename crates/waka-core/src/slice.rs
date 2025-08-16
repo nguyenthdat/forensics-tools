@@ -1,6 +1,6 @@
 use std::{fs, path::PathBuf};
 
-use serde::Deserialize;
+use bon::Builder;
 
 use crate::{
     config::{Config, Delimiter},
@@ -8,24 +8,47 @@ use crate::{
     util,
 };
 
-#[allow(clippy::unsafe_derive_deserialize)]
-#[derive(Deserialize)]
-struct Args {
-    arg_input:       Option<String>,
-    flag_start:      Option<isize>,
-    flag_end:        Option<usize>,
-    flag_len:        Option<usize>,
-    flag_index:      Option<isize>,
-    flag_json:       bool,
-    flag_output:     Option<String>,
-    flag_no_headers: bool,
-    flag_delimiter:  Option<Delimiter>,
-    flag_invert:     bool,
+#[derive(Clone, Debug, PartialEq, Hash, Builder)]
+#[builder(derive(Clone, Debug, Into))]
+pub struct Args {
+    #[builder(into)]
+    pub arg_input:       Option<String>,
+    pub flag_start:      Option<isize>,
+    pub flag_end:        Option<usize>,
+    pub flag_len:        Option<usize>,
+    pub flag_index:      Option<isize>,
+    pub flag_json:       bool,
+    #[builder(into)]
+    pub flag_output:     Option<String>,
+    pub flag_no_headers: bool,
+    pub flag_delimiter:  Option<Delimiter>,
+    pub flag_invert:     bool,
 }
 
-pub fn run(argv: &[&str]) -> anyhow::Result<()> {
-    let mut args: Args = util::get_args("", argv)?;
+pub fn page(conf: &Config, start: usize, len: usize) -> anyhow::Result<Vec<csv::ByteRecord>> {
+    // Try to use the index if present for efficient random access.
+    if let Some(mut idx) = conf.indexed()? {
+        idx.seek(start as u64)?;
+        let mut out: Vec<csv::ByteRecord> = Vec::with_capacity(len.min(1024));
+        for r in idx.byte_records().take(len) {
+            out.push(r?);
+        }
+        return Ok(out);
+    }
 
+    // Fallback: stream via CSV reader and skip to `start`.
+    let mut rdr = conf.reader()?;
+    // Ensure we are positioned after the header row for data rows.
+    let _ = rdr.headers();
+
+    let mut out: Vec<csv::ByteRecord> = Vec::with_capacity(len.min(1024));
+    for r in rdr.byte_records().skip(start).take(len) {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+pub fn run(mut args: Args) -> anyhow::Result<()> {
     let tmpdir = tempfile::tempdir()?;
     let work_input = util::process_input(
         vec![PathBuf::from(

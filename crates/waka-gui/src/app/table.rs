@@ -20,7 +20,11 @@ use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use ustr::{Ustr, ustr};
-use waka_core::count::{self, Args};
+use waka_core::{
+    config::Config,
+    count::{self, Args},
+    slice,
+};
 
 use crate::util;
 
@@ -140,7 +144,13 @@ impl TableEditor {
     /// while sharing the same horizontal scroll as the body.
     pub fn show_preview_table(&mut self, ui: &mut Ui) {
         let (headers, file_id) = match self.current_fp() {
-            Some(fp) => (fp.headers.clone(), fp.file_path),
+            Some(fp) => (
+                fp.headers
+                    .iter()
+                    .map(|u| u.as_str().to_owned())
+                    .collect::<Vec<String>>(),
+                fp.file_path,
+            ),
             None => return,
         };
         let col_width: f32 = 180.0;
@@ -392,7 +402,7 @@ impl TableEditor {
         };
         let mut new_page = fp.page;
         let path_str = fp.file_path.to_string();
-        let cfg = Config::new(Some(&path_str));
+        let cfg = Config::builder().path(&path_str).build();
 
         // Prepare rows buffer up front
         fp.preview_rows.clear();
@@ -417,9 +427,13 @@ impl TableEditor {
 
             // count rows once per file (if not already counted)
             if fp.total_rows.is_none() {
-                let total = count::run(Args::builder().arg_input(&path_str).build())
-                    .unwrap()
-                    .0;
+                let total = match count::run(Args::builder().arg_input(&path_str).build()) {
+                    Ok((cnt, _)) => cnt,
+                    Err(e) => {
+                        fp.load_error = Some(ustr(&format!("Count error: {e}")));
+                        0
+                    },
+                };
                 fp.total_rows = Some(total);
                 new_total_rows = Some(total as usize); // update self after dropping fp
                 // Clamp page within new total
@@ -506,24 +520,19 @@ impl TableEditor {
                     i += len;
                 }
             } else {
-                // Unsorted & unfiltered fast page-seek
+                // Unsorted & unfiltered fast page-seek via library slice helper
                 let start = new_page.saturating_mul(rows_per_page);
-                if let Err(e) = idx.seek(start as u64) {
-                    fp.load_error = Some(ustr(&format!("Index seek error: {e}")));
-                } else {
-                    for rec_res in idx.byte_records().take(rows_per_page) {
-                        match rec_res {
-                            Ok(brec) => {
-                                let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
-                                row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
-                                fp.preview_rows.push(row);
-                            },
-                            Err(e) => {
-                                fp.load_error = Some(ustr(&format!("Row read error: {e}")));
-                                break;
-                            },
+                match slice::page(&cfg, start, rows_per_page) {
+                    Ok(recs) => {
+                        for brec in recs {
+                            let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
+                            row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
+                            fp.preview_rows.push(row);
                         }
-                    }
+                    },
+                    Err(e) => {
+                        fp.load_error = Some(ustr(&format!("Slice error: {e}")));
+                    },
                 }
             }
         } else {
@@ -541,7 +550,13 @@ impl TableEditor {
 
                     // count rows once per file (if not already counted)
                     if fp.total_rows.is_none() {
-                        let total = util::count_rows_for_path(&path_str);
+                        let total = match count::run(Args::builder().arg_input(&path_str).build()) {
+                            Ok((cnt, _)) => cnt,
+                            Err(e) => {
+                                fp.load_error = Some(ustr(&format!("Count error: {e}")));
+                                0
+                            },
+                        };
                         fp.total_rows = Some(total);
                         new_total_rows = Some(total as usize); // update self after dropping fp
                         // Clamp page within new total
@@ -625,21 +640,23 @@ impl TableEditor {
                             }
                         }
                     } else {
-                        // Unsorted & unfiltered: simple skip/take
+                        // Unsorted & unfiltered: use the library slice helper to keep logic
+                        // centralized
                         let start = new_page.saturating_mul(rows_per_page);
-                        for rec_res in rdr.records().skip(start).take(rows_per_page) {
-                            match rec_res {
-                                Ok(rec) => {
+                        match slice::page(&cfg, start, rows_per_page) {
+                            Ok(recs) => {
+                                for brec in recs {
                                     let mut row =
-                                        Vec::with_capacity(fp.headers.len().max(rec.len()));
-                                    row.extend(rec.iter().map(ustr));
+                                        Vec::with_capacity(fp.headers.len().max(brec.len()));
+                                    row.extend(
+                                        brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))),
+                                    );
                                     fp.preview_rows.push(row);
-                                },
-                                Err(e) => {
-                                    fp.load_error = Some(ustr(&format!("Row read error: {e}")));
-                                    break;
-                                },
-                            }
+                                }
+                            },
+                            Err(e) => {
+                                fp.load_error = Some(ustr(&format!("Slice error: {e}")));
+                            },
                         }
                     }
                 },
@@ -705,12 +722,20 @@ impl TableEditor {
         };
 
         // Count first so we can clamp paging appropriately (byte_records for speed)
-        let total = util::count_rows_for_path(fp.file_path.as_ref());
+        let total = match count::run(Args::builder().arg_input(fp.file_path.to_string()).build()) {
+            Ok((cnt, _)) => cnt,
+            Err(e) => {
+                fp.load_error = Some(ustr(&format!("Count error: {e}")));
+                0
+            },
+        };
+
         fp.total_rows = Some(total);
         self.toal_rows = total as usize;
         self.page = 0;
 
-        let cfg = Config::new(Some(&fp.file_path.to_string()));
+        let cfg = Config::builder().path(fp.file_path).build();
+
         match cfg.reader() {
             Ok(mut rdr) => {
                 if let Ok(hdrs) = rdr.headers() {
@@ -918,7 +943,7 @@ impl TableEditor {
         wtr.write_record(fp.headers.iter().map(|u| u.as_str()))?;
 
         let path_str = fp.file_path.to_string();
-        let cfg = Config::new(Some(&path_str));
+        let cfg = Config::builder().path(&path_str).build();
 
         // If we have filtered indices and only_filtered is true, restrict to them; else stream all
         // rows.
@@ -1035,7 +1060,7 @@ impl TableEditor {
     ) -> anyhow::Result<()> {
         let headers: Vec<&str> = fp.headers.iter().map(|u| u.as_str()).collect();
         let path_str = fp.file_path.to_string();
-        let cfg = Config::new(Some(&path_str));
+        let cfg = Config::builder().path(&path_str).build();
 
         // helper to emit one object
         let mut first = true;
@@ -1435,7 +1460,7 @@ impl TableEditor {
         }
 
         let path_str = fp.file_path.to_string();
-        let cfg = Config::new(Some(&path_str));
+        let cfg = Config::builder().path(&path_str).build();
         let mut set: BTreeSet<Ustr> = BTreeSet::new();
         let limit = 2_000usize; // keep menus snappy
 
@@ -1498,7 +1523,7 @@ impl TableEditor {
         }
 
         let path_str = fp.file_path.to_string();
-        let cfg = Config::new(Some(&path_str));
+        let cfg = Config::builder().path(&path_str).build();
         let mut out: Vec<u64> = Vec::new();
 
         // Try fast byte-indexed path
