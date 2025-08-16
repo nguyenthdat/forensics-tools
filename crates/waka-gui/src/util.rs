@@ -327,7 +327,7 @@ pub fn lower_ascii_into<'a>(buf: &'a mut Vec<u8>, src: &[u8]) -> &'a [u8] {
 
 // --- Performance helpers for filtering on large files ---
 #[inline]
-pub fn selected_set_bytes(selected: &[Ustr], case_insensitive: bool) -> HashSet<Vec<u8>> {
+pub fn selected_set_bytes(selected: &[String], case_insensitive: bool) -> HashSet<Vec<u8>> {
     let mut set = HashSet::with_capacity(selected.len());
     for v in selected {
         let mut bytes = v.as_str().as_bytes().to_vec();

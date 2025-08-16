@@ -19,12 +19,7 @@ use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use ustr::{Ustr, ustr};
-use waka_core::{
-    config::Config,
-    count::{self, Args},
-    slice,
-};
+use waka_core::{config::Config, count, slice};
 
 use crate::util;
 
@@ -42,16 +37,16 @@ pub struct ColumnFilter {
     pub enabled:          bool,
     pub include:          bool, // include selected values when true; else exclude them
     pub case_insensitive: bool, // Aa toggle
-    pub selected:         Vec<Ustr>, // chosen values in this column
+    pub selected:         Vec<String>, // chosen values in this column
     #[serde(skip)]
-    pub distinct_cache:   Option<Vec<Ustr>>, // lazily populated (sampled)
+    pub distinct_cache:   Option<Vec<String>>, // lazily populated (sampled)
     #[serde(skip)]
-    pub search:           Ustr, // search within the dropdown
+    pub search:           String, // search within the dropdown
     // Regex filtering
-    pub use_regex:        bool, // enable regex filter
-    pub regex_text:       Ustr, // pattern text (persisted)
+    pub use_regex:        bool,   // enable regex filter
+    pub regex_text:       String, // pattern text (persisted)
     #[serde(skip)]
-    pub regex_error:      Option<Ustr>, // last regex compile error (ui only)
+    pub regex_error:      Option<String>, // last regex compile error (ui only)
     #[serde(skip)]
     pub compiled_regex:   Option<Regex>, // cached compiled regex (ui/runtime only)
 }
@@ -64,9 +59,9 @@ impl Default for ColumnFilter {
             case_insensitive: false,
             selected:         Vec::new(),
             distinct_cache:   None,
-            search:           ustr(""),
+            search:           String::new(),
             use_regex:        false,
-            regex_text:       ustr(""),
+            regex_text:       String::new(),
             regex_error:      None,
             compiled_regex:   None,
         }
@@ -84,7 +79,7 @@ impl ColumnFilter {
                     self.compiled_regex = Some(rx);
                 },
                 Err(e) => {
-                    self.regex_error = Some(ustr(&e.to_string()));
+                    self.regex_error = Some(e.to_string());
                     self.compiled_regex = None;
                 },
             }
@@ -98,13 +93,13 @@ impl ColumnFilter {
 
 #[derive(Debug, Clone, Builder)]
 pub struct FilePreview {
-    pub file_path:        Ustr,
-    pub headers:          Vec<Ustr>,
-    pub preview_rows:     Vec<Vec<Ustr>>,
+    pub file_path:        String,
+    pub headers:          Vec<String>,
+    pub preview_rows:     Vec<Vec<String>>,
     pub filters:          Vec<ColumnFilter>,
     pub page:             usize, // 0-based, per-file current page
     pub total_rows:       Option<u64>,
-    pub load_error:       Option<Ustr>,
+    pub load_error:       Option<String>,
     pub filtered_indices: Option<Vec<u64>>,
     pub sorted_indices:   Option<Vec<u64>>,
     pub sort_col:         Option<usize>,
@@ -119,7 +114,7 @@ pub struct TableEditor {
     pub page:                 usize, // 0-based
     pub export_format:        ExportFormat,
     pub export_only_filtered: bool,
-    pub export_status:        Option<Ustr>,
+    pub export_status:        Option<String>,
     pub pending_reload:       bool,
 }
 
@@ -149,7 +144,7 @@ impl TableEditor {
                     .iter()
                     .map(|u| u.as_str().to_owned())
                     .collect::<Vec<String>>(),
-                fp.file_path,
+                fp.file_path.clone(),
             ),
             None => return,
         };
@@ -259,7 +254,7 @@ impl TableEditor {
                                                                     )
                                                                     .changed();
                                                                 if edited {
-                                                                    f.regex_text = ustr(&rbuf);
+                                                                    f.regex_text = rbuf;
                                                                     f.rebuild_regex();
                                                                     if f.regex_error.is_none() {
                                                                         apply_now = true;
@@ -280,16 +275,16 @@ impl TableEditor {
                                                                 .add(TextEdit::singleline(&mut buf).hint_text("Search values..."))
                                                                 .changed()
                                                             {
-                                                                f.search = ustr(&buf);
+                                                                f.search = buf;
                                                             }
                                                             ui.add_space(4.0);
 
-                                                            let values_slice: &[Ustr] = f
+                                                            let values_slice: &[String] = f
                                                                 .distinct_cache.as_deref()
                                                                 .unwrap_or(&[]);
                                                             let search_lower = f.search.as_str().to_ascii_lowercase();
 
-                                                            let mut selected_set: std::collections::HashSet<Ustr> =
+                                                            let mut selected_set: std::collections::HashSet<String> =
                                                                 f.selected.iter().cloned().collect();
                                                             egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
                                                                 for val in values_slice.iter() {
@@ -302,7 +297,7 @@ impl TableEditor {
                                                                     let mut checked = selected_set.contains(val);
                                                                     if ui.checkbox(&mut checked, val.as_str()).clicked() {
                                                                         if checked {
-                                                                            selected_set.insert(*val);
+                                                                            selected_set.insert(val.clone());
                                                                         } else {
                                                                             selected_set.remove(val);
                                                                         }
@@ -416,21 +411,21 @@ impl TableEditor {
             // headers: only (re)read into cache if empty
             if fp.headers.is_empty() {
                 if let Ok(hdrs) = idx.headers() {
-                    fp.headers = hdrs.iter().map(ustr).collect();
+                    fp.headers = hdrs.iter().map(|s| s.to_string()).collect();
                 } else if let Ok(bhdrs) = idx.byte_headers() {
                     fp.headers = bhdrs
                         .iter()
-                        .map(|b| ustr(&String::from_utf8_lossy(b)))
+                        .map(|b| String::from_utf8_lossy(b).to_string())
                         .collect();
                 }
             }
 
             // count rows once per file (if not already counted)
             if fp.total_rows.is_none() {
-                let total = match count::run(Args::builder().arg_input(&path_str).build()) {
+                let total = match count::run(count::Args::builder().arg_input(&path_str).build()) {
                     Ok((cnt, _)) => cnt,
                     Err(e) => {
-                        fp.load_error = Some(ustr(&format!("Count error: {e}")));
+                        fp.load_error = Some(format!("Count error: {e}"));
                         0
                     },
                 };
@@ -501,18 +496,20 @@ impl TableEditor {
                         len += 1;
                     }
                     if let Err(e) = idx.seek(base) {
-                        fp.load_error = Some(ustr(&format!("Index seek error: {e}")));
+                        fp.load_error = Some(format!("Index seek error: {e}"));
                         break;
                     }
                     for rec_res in idx.byte_records().take(len) {
                         match rec_res {
                             Ok(brec) => {
                                 let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
-                                row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
+                                row.extend(
+                                    brec.iter().map(|b| String::from_utf8_lossy(b).to_string()),
+                                );
                                 fp.preview_rows.push(row);
                             },
                             Err(e) => {
-                                fp.load_error = Some(ustr(&format!("Row read error: {e}")));
+                                fp.load_error = Some(format!("Row read error: {e}"));
                                 break;
                             },
                         }
@@ -526,12 +523,12 @@ impl TableEditor {
                     Ok(recs) => {
                         for brec in recs {
                             let mut row = Vec::with_capacity(fp.headers.len().max(brec.len()));
-                            row.extend(brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))));
+                            row.extend(brec.iter().map(|b| String::from_utf8_lossy(b).to_string()));
                             fp.preview_rows.push(row);
                         }
                     },
                     Err(e) => {
-                        fp.load_error = Some(ustr(&format!("Slice error: {e}")));
+                        fp.load_error = Some(format!("Slice error: {e}"));
                     },
                 }
             }
@@ -541,7 +538,7 @@ impl TableEditor {
                     // headers: only (re)read into cache if empty
                     if fp.headers.is_empty() {
                         if let Ok(hdrs) = rdr.headers() {
-                            fp.headers = hdrs.iter().map(ustr).collect();
+                            fp.headers = hdrs.iter().map(|s| s.to_string()).collect();
                         }
                     } else {
                         // Ensure CSV header row is consumed so records() yields data rows.
@@ -550,13 +547,14 @@ impl TableEditor {
 
                     // count rows once per file (if not already counted)
                     if fp.total_rows.is_none() {
-                        let total = match count::run(Args::builder().arg_input(&path_str).build()) {
-                            Ok((cnt, _)) => cnt,
-                            Err(e) => {
-                                fp.load_error = Some(ustr(&format!("Count error: {e}")));
-                                0
-                            },
-                        };
+                        let total =
+                            match count::run(count::Args::builder().arg_input(&path_str).build()) {
+                                Ok((cnt, _)) => cnt,
+                                Err(e) => {
+                                    fp.load_error = Some(format!("Count error: {e}"));
+                                    0
+                                },
+                            };
                         fp.total_rows = Some(total);
                         new_total_rows = Some(total as usize); // update self after dropping fp
                         // Clamp page within new total
@@ -623,7 +621,7 @@ impl TableEditor {
                                     if let Ok(rec) = rec_res {
                                         let mut row =
                                             Vec::with_capacity(fp.headers.len().max(rec.len()));
-                                        row.extend(rec.iter().map(ustr));
+                                        row.extend(rec.iter().map(|s| s.to_string()));
                                         fp.preview_rows.push(row);
                                     }
                                     next = wanted_iter.next();
@@ -649,19 +647,19 @@ impl TableEditor {
                                     let mut row =
                                         Vec::with_capacity(fp.headers.len().max(brec.len()));
                                     row.extend(
-                                        brec.iter().map(|b| ustr(&String::from_utf8_lossy(b))),
+                                        brec.iter().map(|b| String::from_utf8_lossy(b).to_string()),
                                     );
                                     fp.preview_rows.push(row);
                                 }
                             },
                             Err(e) => {
-                                fp.load_error = Some(ustr(&format!("Slice error: {e}")));
+                                fp.load_error = Some(format!("Slice error: {e}"));
                             },
                         }
                     }
                 },
                 Err(e) => {
-                    fp.load_error = Some(ustr(&format!("Unable to open file: {e}")));
+                    fp.load_error = Some(format!("Unable to open file: {e}"));
                 },
             }
         }
@@ -697,7 +695,7 @@ impl TableEditor {
     }
 
     pub fn load_preview(&mut self, path: PathBuf) {
-        let file_path = Ustr::from(&path.to_string_lossy());
+        let file_path = path.to_string_lossy().to_string();
         // Avoid reloading same file
         if let Some(idx) = self.files.iter().position(|fp| fp.file_path == file_path) {
             self.current_file = idx;
@@ -722,10 +720,14 @@ impl TableEditor {
         };
 
         // Count first so we can clamp paging appropriately (byte_records for speed)
-        let total = match count::run(Args::builder().arg_input(fp.file_path.to_string()).build()) {
+        let total = match count::run(
+            count::Args::builder()
+                .arg_input(fp.file_path.to_string())
+                .build(),
+        ) {
             Ok((cnt, _)) => cnt,
             Err(e) => {
-                fp.load_error = Some(ustr(&format!("Count error: {e}")));
+                fp.load_error = Some(format!("Count error: {e}"));
                 0
             },
         };
@@ -734,14 +736,14 @@ impl TableEditor {
         self.toal_rows = total as usize;
         self.page = 0;
 
-        let cfg = Config::builder().path(fp.file_path).build();
+        let cfg = Config::builder().path(&fp.file_path).build();
 
         match cfg.reader() {
             Ok(mut rdr) => {
                 if let Ok(hdrs) = rdr.headers() {
-                    fp.headers = hdrs.iter().map(ustr).collect();
+                    fp.headers = hdrs.iter().map(|s| s.to_string()).collect();
                 } else {
-                    fp.load_error = Some(ustr("Cannot read headers"));
+                    fp.load_error = Some("Cannot read headers".to_string());
                 }
                 if fp.load_error.is_none() {
                     fp.filters = vec![ColumnFilter::default(); fp.headers.len()];
@@ -754,23 +756,23 @@ impl TableEditor {
                         match rec_res {
                             Ok(rec) => {
                                 let mut row = Vec::with_capacity(fp.headers.len().max(rec.len()));
-                                row.extend(rec.iter().map(ustr));
+                                row.extend(rec.iter().map(|s| s.to_string()));
                                 fp.preview_rows.push(row);
                             },
                             Err(e) => {
-                                fp.load_error = Some(ustr(&format!("Row read error: {e}")));
+                                fp.load_error = Some(format!("Row read error: {e}"));
                                 break;
                             },
                         }
                     }
 
                     if fp.preview_rows.is_empty() && fp.load_error.is_none() {
-                        fp.load_error = Some(ustr("No data rows found."));
+                        fp.load_error = Some("No data rows found.".to_string());
                     }
                 }
             },
             Err(e) => {
-                fp.load_error = Some(ustr(&format!("Unable to open file: {e}")));
+                fp.load_error = Some(format!("Unable to open file: {e}"));
             },
         }
 
@@ -922,9 +924,9 @@ impl TableEditor {
         if let Some(fp) = self.current_fp_mut() {
             for f in &mut fp.filters {
                 f.selected.clear();
-                f.search = ustr("");
+                f.search = String::new();
                 f.use_regex = false;
-                f.regex_text = ustr("");
+                f.regex_text = String::new();
                 f.regex_error = None;
             }
             fp.filtered_indices = None;
@@ -1336,10 +1338,10 @@ impl TableEditor {
                             },
                         };
 
-                        self.export_status = Some(ustr(&match result {
+                        self.export_status = Some(match result {
                             Ok(()) => "✅ Export complete".to_string(),
                             Err(e) => format!("⚠ Export failed: {e}"),
-                        }));
+                        });
                     }
                     if ui.button("Close").clicked() {
                         egui::Popup::close_id(ui.ctx(), popup_id);
@@ -1461,7 +1463,7 @@ impl TableEditor {
 
         let path_str = fp.file_path.to_string();
         let cfg = Config::builder().path(&path_str).build();
-        let mut set: BTreeSet<Ustr> = BTreeSet::new();
+        let mut set: BTreeSet<String> = BTreeSet::new();
         let limit = 2_000usize; // keep menus snappy
 
         if let Ok(Some(mut idx)) = cfg.indexed() {
@@ -1469,7 +1471,7 @@ impl TableEditor {
                 if let Ok(brec) = rec_res
                     && let Some(val) = brec.get(col)
                 {
-                    set.insert(ustr(&String::from_utf8_lossy(val)));
+                    set.insert(String::from_utf8_lossy(val).to_string());
                     if set.len() >= limit {
                         break;
                     }
@@ -1480,7 +1482,7 @@ impl TableEditor {
                 if let Ok(rec) = rec_res
                     && let Some(val) = rec.get(col)
                 {
-                    set.insert(ustr(val));
+                    set.insert(val.into());
                     if set.len() >= limit {
                         break;
                     }
@@ -1488,7 +1490,7 @@ impl TableEditor {
             }
         }
 
-        let distinct: Vec<Ustr> = set.into_iter().collect();
+        let distinct: Vec<String> = set.into_iter().collect();
         if let Some(f) = fp.filters.get_mut(col) {
             f.distinct_cache = Some(distinct);
         }
@@ -1676,10 +1678,10 @@ impl TableEditor {
                     fp.sort_col = Some(col);
                     fp.sort_desc = descending;
                 }
-                self.export_status = Some(ustr("✅ Sorted"));
+                self.export_status = Some("✅ Sorted".to_string());
             },
             Err(e) => {
-                self.export_status = Some(ustr(&format!("⚠ Sort failed: {e}")));
+                self.export_status = Some(format!("⚠ Sort failed: {e}"));
             },
         }
         // Force preview reload after sort

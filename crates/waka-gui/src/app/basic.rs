@@ -140,11 +140,11 @@ impl BasicEditor {
                 return;
             };
             (
-                fp.file_path,
+                fp.file_path.clone(),
                 fp.preview_rows.len(),
                 self.table.current_file,
                 self.table.files.len(),
-                fp.load_error,
+                fp.load_error.clone(),
                 fp.preview_rows.is_empty(),
             )
         };
