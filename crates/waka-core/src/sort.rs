@@ -38,6 +38,50 @@ pub struct Args {
     pub flag_memcheck:    bool,
 }
 
+/// Return 0-based data-row indices for which the value in `col_index`
+/// equals any of the provided `selected` values. This performs **value matching only**;
+/// callers can implement include/exclude and multi-column composition on top.
+///
+/// The returned indices are sorted ascending.
+pub fn match_indices_single_col_values(
+    path: &str,
+    col_index: usize,
+    case_insensitive: bool,
+    selected: &[String],
+) -> anyhow::Result<Vec<u64>> {
+    use std::collections::HashSet;
+    let rconfig = Config::builder().path(path).build();
+    let mut rdr = rconfig.reader()?;
+
+    if selected.is_empty() {
+        return Ok(Vec::new()); // nothing selected => no matches
+    }
+
+    // Build the lookup set with requested case semantics.
+    let lookup: HashSet<String> = if case_insensitive {
+        selected.iter().map(|s| s.to_ascii_lowercase()).collect()
+    } else {
+        selected.iter().cloned().collect()
+    };
+
+    let mut out: Vec<u64> = Vec::new();
+    // Ensure header is consumed so `records()` yields data rows only
+    let _ = rdr.headers();
+    for (ri, rec_res) in rdr.records().enumerate() {
+        let rec = rec_res?;
+        let cell = rec.get(col_index).unwrap_or("");
+        let key = if case_insensitive {
+            cell.to_ascii_lowercase()
+        } else {
+            cell.to_string()
+        };
+        if lookup.contains(&key) {
+            out.push(ri as u64);
+        }
+    }
+    Ok(out)
+}
+
 #[derive(Debug, EnumString, PartialEq)]
 #[strum(ascii_case_insensitive)]
 pub enum RngKind {
@@ -331,6 +375,93 @@ pub fn run(args: Args) -> anyhow::Result<()> {
         }
     }
     Ok(wtr.flush()?)
+}
+
+/// Sort the rows of the CSV at `path` by a single 0-based column index and
+/// return the row indices (0-based, data rows only; header excluded) in the
+/// resulting order. This is optimized for GUI pagination: callers can seek
+/// rows by index using qsv's byte index or a streaming reader.
+///
+/// The flags closely mirror `qsv sort` behavior but are simplified for GUI use:
+/// - `numeric`: numeric comparison
+/// - `natural`: natural sort order (e.g., v2 < v10)
+/// - `reverse`: descending order
+/// - `ignore_case`: case-insensitive (where applicable)
+/// - `faster`: use Rayon `par_sort_unstable_by` (non-allocating comparator)
+pub fn sort_indices_single_col(
+    path: &str,
+    col_index: usize,
+    numeric: bool,
+    natural: bool,
+    reverse: bool,
+    ignore_case: bool,
+    faster: bool,
+) -> anyhow::Result<Vec<u64>> {
+    use rayon::slice::ParallelSliceMut;
+
+    let rconfig = Config::builder().path(path).build();
+    let mut rdr = rconfig.reader()?;
+
+    // Collect all data rows (header is excluded by `records()`/`byte_records()`).
+    let mut rows: Vec<(u64, csv::ByteRecord)> = Vec::new();
+    for (ri, rec_res) in rdr.byte_records().enumerate() {
+        let rec = rec_res?;
+        rows.push((ri as u64, rec));
+    }
+
+    // Field accessor for the chosen column (falls back to empty bytes).
+    #[inline]
+    fn field<'a>(rec: &'a csv::ByteRecord, ci: usize) -> &'a [u8] {
+        rec.get(ci).unwrap_or(b"")
+    }
+
+    // Build a comparator according to the requested mode.
+    let cmp_base = |a: &csv::ByteRecord, b: &csv::ByteRecord| {
+        if numeric {
+            iter_cmp_num(
+                std::iter::once(field(a, col_index)),
+                std::iter::once(field(b, col_index)),
+            )
+        } else if natural {
+            if ignore_case {
+                iter_cmp_natural_ignore_case(
+                    std::iter::once(field(a, col_index)),
+                    std::iter::once(field(b, col_index)),
+                )
+            } else {
+                iter_cmp_natural(
+                    std::iter::once(field(a, col_index)),
+                    std::iter::once(field(b, col_index)),
+                )
+            }
+        } else {
+            if ignore_case {
+                iter_cmp_ignore_case(
+                    std::iter::once(field(a, col_index)),
+                    std::iter::once(field(b, col_index)),
+                )
+            } else {
+                iter_cmp(
+                    std::iter::once(field(a, col_index)),
+                    std::iter::once(field(b, col_index)),
+                )
+            }
+        }
+    };
+
+    // Final comparator with optional reverse.
+    let ord = |x: &(u64, csv::ByteRecord), y: &(u64, csv::ByteRecord)| {
+        let o = cmp_base(&x.1, &y.1);
+        if reverse { o.reverse() } else { o }
+    };
+
+    if faster {
+        rows.par_sort_unstable_by(|x, y| ord(x, y));
+    } else {
+        rows.par_sort_by(|x, y| ord(x, y));
+    }
+
+    Ok(rows.into_iter().map(|(i, _)| i).collect())
 }
 
 /// Order `a` and `b` lexicographically using `Ord`

@@ -33,7 +33,6 @@ tracing-subscriber = { workspace = true, features = [
     "std",
     "tracing-log",
 ] }
-ustr = { workspace = true, features = ["serde"] }
 serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }
 bon.workspace = true

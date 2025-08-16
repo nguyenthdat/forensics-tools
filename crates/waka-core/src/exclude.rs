@@ -225,3 +225,48 @@ impl<R> fmt::Debug for ValueIndex<R> {
 fn get_row_key(sel: &Selection, row: &csv::ByteRecord, casei: bool) -> Vec<ByteString> {
     sel.select(row).map(|v| util::transform(v, casei)).collect()
 }
+
+/// Return 0-based data-row indices for which the value in `col_index`
+/// equals any of the provided `selected` values. Matching uses the same
+/// normalization as the qsv exclude command via `util::transform` and honors
+/// `casei` (case-insensitive) semantics. This function does **not** apply
+/// include/exclude; callers can compute complements and multi-column
+/// compositions in the GUI layer.
+pub fn match_indices_single_col_values(
+    path: &str,
+    col_index: usize,
+    casei: bool,
+    selected: &[String],
+) -> anyhow::Result<Vec<u64>> {
+    use crate::config::Config;
+    use std::collections::HashSet;
+
+    if selected.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Build normalized lookup set using identical transform logic to the CLI
+    let lookup: HashSet<ByteString> = selected
+        .iter()
+        .map(|s| util::transform(s.as_bytes(), casei))
+        .collect();
+
+    let cfg = Config::builder().path(path).build();
+    let mut out: Vec<u64> = Vec::new();
+    match cfg.reader() {
+        Ok(mut rdr) => {
+            // Ensure header is consumed so `records()` yields data rows only
+            let _ = rdr.headers();
+            for (ri, rec_res) in rdr.records().enumerate() {
+                let rec = rec_res?;
+                let cell = rec.get(col_index).unwrap_or("");
+                let key = util::transform(cell.as_bytes(), casei);
+                if lookup.contains(&key) {
+                    out.push(ri as u64);
+                }
+            }
+            Ok(out)
+        },
+        Err(e) => Err(anyhow!("Unable to open CSV reader: {e}")),
+    }
+}

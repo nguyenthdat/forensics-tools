@@ -8684,19 +8684,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
-name = "ustr"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18b19e258aa08450f93369cf56dd78063586adf19e92a75b338a800f799a0208"
-dependencies = [
- "ahash 0.8.12",
- "byteorder",
- "lazy_static",
- "parking_lot",
- "serde",
-]
-
-[[package]]
 name = "usvg"
 version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8895,7 +8882,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
- "ustr",
  "waka-core",
 ]
 
@@ -10378,11 +10364,6 @@ dependencies = [
 ]
 
 [[patch.unused]]
-name = "grex"
-version = "1.4.5"
-source = "git+https://github.com/jqnatividad/grex?branch=bumped-dependencies-202502#7b9b6cc831f8090a81c48f6091a1ca36c35a498c"
-
-[[patch.unused]]
 name = "json-objects-to-csv"
 version = "0.1.3"
 source = "git+https://github.com/jqnatividad/json-objects-to-csv?branch=preserve_order_issue_10#90123472bc6526c993cc48a492ddb16a9f40682e"
@@ -10396,8 +10377,3 @@ source = "git+https://github.com/jqnatividad/localzone?branch=bump-deps-may2025#
 name = "ord_subset"
 version = "3.1.1"
 source = "git+https://github.com/nguyenthdat/ord_subset?branch=master#ca4d871f52978ad7f9d8bd23994aa85b13a82efc"
-
-[[patch.unused]]
-name = "self_update"
-version = "0.42.0"
-source = "git+https://github.com/jqnatividad/self_update?branch=bump-deps-july2025#cbdf85c283d482e6179b6092a0c7848f86227541"

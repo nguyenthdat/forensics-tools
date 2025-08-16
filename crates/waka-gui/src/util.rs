@@ -11,7 +11,6 @@ use epaint::{Color32, Shape, Stroke};
 use ext_sort::{ExternalSorter, ExternalSorterBuilder, LimitedBufferBuilder};
 use num_cpus;
 use polars_sql::SQLContext;
-use ustr::Ustr;
 use waka_core::{
     config::{Config, Delimiter},
     sqlp::OutputMode,
@@ -73,11 +72,14 @@ fn append_excel_like_key(out: &mut String, field_str: &str) {
     }
 }
 
-pub fn display_name(path: &str) -> Ustr {
+pub fn display_name(path: &str) -> String {
     Path::new(path)
         .file_name()
-        .map(|s| Ustr::from(&s.to_string_lossy()))
-        .unwrap_or_else(|| Ustr::from(path))
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| {
+            // If no file name, use the path itself
+            path.to_string()
+        })
 }
 
 pub fn norm<'a>(s: &'a str, casei: bool) -> std::borrow::Cow<'a, str> {

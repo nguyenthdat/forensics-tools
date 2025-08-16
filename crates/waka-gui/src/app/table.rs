@@ -19,7 +19,7 @@ use regex::{Regex, RegexBuilder};
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use waka_core::{config::Config, count, slice};
+use waka_core::{config::Config, count, slice, sort};
 
 use crate::util;
 
@@ -182,6 +182,39 @@ impl TableEditor {
         } else {
             page
         }
+    }
+
+    /// Heuristically infer sort preferences (numeric/natural/ignore_case) for a column
+    /// by sampling up to 256 data rows. Numeric wins if >=90% are parseable as numbers.
+    /// Otherwise, we prefer natural when ~40%+ contain digits; we default to case-insensitive.
+    fn infer_sort_prefs_for_col(&self, path: &str, col: usize) -> (bool, bool, bool) {
+        let cfg = Config::builder().path(path).build();
+        let mut numeric_hits = 0usize;
+        let mut has_digit_hits = 0usize;
+        let mut sample = 0usize;
+        if let Ok(mut rdr) = cfg.reader() {
+            // ensure header consumed so `records()` yields data rows
+            let _ = rdr.headers();
+            for rec_res in rdr.records().take(256) {
+                if let Ok(rec) = rec_res {
+                    sample += 1;
+                    let s = rec.get(col).unwrap_or("").trim();
+                    if s.is_empty() {
+                        continue;
+                    }
+                    if s.chars().any(|c| c.is_ascii_digit()) {
+                        has_digit_hits += 1;
+                    }
+                    if s.parse::<f64>().is_ok() {
+                        numeric_hits += 1;
+                    }
+                }
+            }
+        }
+        let numeric = sample > 0 && numeric_hits * 10 >= sample * 9; // >=90%
+        let natural = !numeric && (sample > 0) && (has_digit_hits * 100 >= sample * 40); // ~40%+
+        let ignore_case = true;
+        (numeric, natural, ignore_case)
     }
 
     /// Render the preview table with a header that stays pinned vertically
@@ -1320,6 +1353,52 @@ impl TableEditor {
             });
     }
 
+    /// Handle a sort click for the given column and sort direction.
+    fn on_sort_click(&mut self, col: usize, desc: bool) {
+        // Record chosen sort in the active file and compute indices using waka_core::sort
+        let (path, file_idx);
+        if let Some(fp) = self.current_fp() {
+            path = fp.file_path.clone();
+            file_idx = self.current_file;
+        } else {
+            return;
+        }
+
+        // Update flags on the active FilePreview first
+        if let Some(fp_mut) = self.current_fp_mut() {
+            fp_mut.sort_col = Some(col);
+            fp_mut.sort_desc = desc;
+        }
+
+        // Infer sensible defaults for comparator style
+        let (numeric, natural, ignore_case) = self.infer_sort_prefs_for_col(&path, col);
+
+        // Use the core library sorter to compute a permutation of data-row indices
+        match sort::sort_indices_single_col(
+            path.as_str(),
+            col,
+            numeric,
+            natural,
+            desc,
+            ignore_case,
+            true,
+        ) {
+            Ok(order) => {
+                if let Some(fp_mut) = self.files.get_mut(file_idx) {
+                    fp_mut.sorted_indices = Some(order);
+                    fp_mut.page = 0; // reset to first page on new sort
+                    fp_mut.load_error = None;
+                }
+                self.reload_current_preview_page();
+            },
+            Err(e) => {
+                if let Some(fp_mut) = self.files.get_mut(file_idx) {
+                    fp_mut.load_error = Some(format!("Sort error: {e}"));
+                }
+            },
+        }
+    }
+
     pub fn show_pagination_controls(&mut self, ui: &mut Ui) {
         {
             // Pull current values without holding a mutable borrow during UI
@@ -1638,51 +1717,5 @@ impl TableEditor {
             fp.filtered_indices = Some(out);
             fp.page = 0;
         }
-    }
-
-    fn on_sort_click(&mut self, col: usize, descending: bool) {
-        // Run sort and update per-file UI state
-        match self.sort_current_by_column(col, descending) {
-            Ok(()) => {
-                if let Some(fp) = self.current_fp_mut() {
-                    fp.sort_col = Some(col);
-                    fp.sort_desc = descending;
-                }
-                self.export_status = Some("✅ Sorted".to_string());
-            },
-            Err(e) => {
-                self.export_status = Some(format!("⚠ Sort failed: {e}"));
-            },
-        }
-        // Force preview reload after sort
-        self.reload_current_preview_page();
-    }
-
-    /// Sort the current file by a column using qsv's external sorter.
-    fn sort_current_by_column(&mut self, col: usize, descending: bool) -> anyhow::Result<()> {
-        let Some(fp_snapshot) = self.current_fp().cloned() else {
-            return Err(anyhow!("No file loaded"));
-        };
-        let input_path = fp_snapshot.file_path.to_string();
-
-        let tmp_dir = std::env::temp_dir();
-        let indices = util::external_sort_row_indices_by_columns(
-            &input_path,
-            &[col],
-            descending,
-            None, // default delimiter
-            tmp_dir.to_string_lossy().as_ref(),
-            None,  // memory limit heuristic
-            None,  // threads
-            false, // assume headers present
-        )?;
-
-        if let Some(fp) = self.current_fp_mut() {
-            fp.sorted_indices = Some(indices);
-            fp.page = 0;
-            fp.load_error = None;
-            // don't touch file_path/headers/filters
-        }
-        Ok(())
     }
 }
