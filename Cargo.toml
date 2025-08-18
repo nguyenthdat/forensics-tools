@@ -15,7 +15,7 @@ mtf = { version = "0.6.1", default-features = false, path = "crates/mft" }
 csvs_convert = { version = "0.12.1", features = ["converters", "parquet"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = { version = "1.0" }
-thiserror = "2.0.14"
+thiserror = "2.0.15"
 regex = "1.11.1"
 chrono = { version = "0.4", default-features = false }
 rand = "0.9.2"
