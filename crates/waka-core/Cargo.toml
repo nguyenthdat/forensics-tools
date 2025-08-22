@@ -75,5 +75,5 @@ tantivy-derive.workspace = true
 tabwriter = "1.4.1"
 bytes = "1.10.1"
 futures = "0.3.31"
-url = "2.5.4"
+url = "2.5.6"
 file-format = "0.28.0"
